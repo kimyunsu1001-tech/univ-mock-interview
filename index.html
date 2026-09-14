@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>대학 입시 모의면접</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- 설정 화면 -->
+    <section id="setup-screen" class="screen">
+      <div class="card">
+        <h1>대학 입시 모의면접</h1>
+        <p class="subtitle">AI 면접관과 함께하는 실전 입시 면접 연습</p>
+
+        <div class="field">
+          <label for="api-key">Anthropic API Key <span class="hint">(본인 키, 브라우저에만 저장됨)</span></label>
+          <input type="password" id="api-key" placeholder="sk-ant-..." autocomplete="off" />
+          <p class="field-help">
+            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">API 키 발급 방법 &rarr;</a>
+          </p>
+        </div>
+
+        <div class="field">
+          <label for="model">모델 ID <span class="hint">(필요 시 수정 가능)</span></label>
+          <input type="text" id="model" value="claude-sonnet-5" />
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="major">지원 학과 <span class="hint">(선택)</span></label>
+            <input type="text" id="major" placeholder="예: 경영학과, 간호학과" />
+          </div>
+          <div class="field">
+            <label for="admission-type">전형 유형 <span class="hint">(선택)</span></label>
+            <select id="admission-type">
+              <option value="">선택 안 함</option>
+              <option value="학생부교과">학생부교과</option>
+              <option value="학생부종합">학생부종합</option>
+              <option value="논술">논술</option>
+              <option value="정시">정시</option>
+              <option value="기타">기타</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="interview-style">면접 방식 <span class="hint">(선택)</span></label>
+            <select id="interview-style">
+              <option value="">선택 안 함</option>
+              <option value="인성면접">인성면접</option>
+              <option value="서류기반면접">서류기반면접</option>
+              <option value="제시문면접">제시문면접</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="difficulty">난이도</label>
+            <select id="difficulty">
+              <option value="기본">기본</option>
+              <option value="심화">심화</option>
+            </select>
+          </div>
+        </div>
+
+        <button id="start-btn" class="primary-btn">면접 시작하기</button>
+        <p id="setup-error" class="error-msg" hidden></p>
+
+        <button type="button" id="bank-toggle" class="link-btn">실전 질문 은행 보기 ▼</button>
+        <div id="question-bank" class="question-bank" hidden>
+          <div id="bank-categories"></div>
+          <div class="latest-info">
+            <h4>최신 기출·후기 찾아보기 <span class="hint">(지원 학과 입력 시 맞춤 검색)</span></h4>
+            <div id="latest-links" class="latest-links"></div>
+          </div>
+        </div>
+        <p class="bank-note">
+          질문 은행은 입학처 공개 기출과 입시 정보 사이트에 반복적으로
+          등장하는 유형을 정리한 것으로, 매년 바뀌는 실제 최신 기출과는
+          차이가 있을 수 있습니다. 위 "최신 기출·후기 찾아보기" 링크로
+          최신 자료를 함께 확인하세요.
+        </p>
+      </div>
+    </section>
+
+    <!-- 면접 화면 -->
+    <section id="interview-screen" class="screen" hidden>
+      <header class="chat-header">
+        <div class="chat-header-info">
+          <strong id="header-title">모의면접</strong>
+          <span id="header-sub" class="hint"></span>
+        </div>
+        <button id="restart-btn" class="ghost-btn" title="새 면접 시작">새 면접</button>
+      </header>
+
+      <div id="messages" class="messages"></div>
+
+      <form id="chat-form" class="chat-input-row">
+        <textarea id="chat-input" placeholder="답변을 입력하세요..." rows="2"></textarea>
+        <button type="submit" id="send-btn" class="primary-btn">전송</button>
+      </form>
+    </section>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
