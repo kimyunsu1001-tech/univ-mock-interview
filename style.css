@@ -71,8 +71,9 @@ html, body {
   display: none;
 }
 
-/* ---- Setup screen ---- */
-#setup-screen {
+/* ---- Setup / content screens ---- */
+#setup-screen,
+.center-screen {
   align-items: center;
   justify-content: center;
   padding: 32px 16px;
@@ -93,10 +94,67 @@ html, body {
 }
 
 .subtitle {
-  margin: 0 0 24px;
+  margin: 0 0 12px;
   color: var(--text-muted);
   font-size: 0.9rem;
 }
+
+.intro-text {
+  margin: 0 0 24px;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.intro-text a { color: var(--accent); }
+
+.card.wide {
+  max-width: 680px;
+}
+
+.doc h2 {
+  font-size: 1.05rem;
+  margin: 24px 0 8px;
+}
+
+.doc h2:first-child { margin-top: 0; }
+
+.doc p,
+.doc li {
+  font-size: 0.92rem;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.doc ul {
+  padding-left: 20px;
+  margin: 8px 0;
+}
+
+.doc code {
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+.doc a { color: var(--accent); }
+
+.site-footer {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 20px 16px 32px;
+  font-size: 0.8rem;
+}
+
+.site-footer a {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.site-footer a:hover { text-decoration: underline; }
 
 .field {
   margin-bottom: 16px;

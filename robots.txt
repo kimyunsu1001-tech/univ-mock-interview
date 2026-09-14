@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://kimyunsu1001-tech.github.io/univ-mock-interview/sitemap.xml
