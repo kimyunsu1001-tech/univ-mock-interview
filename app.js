@@ -1,4 +1,4 @@
-/* 대학 입시 모의면접 — 클라이언트에서 Anthropic API를 직접 호출합니다.
+/* 모의면접 AI — 클라이언트에서 Anthropic API를 직접 호출합니다.
    API 키는 브라우저 localStorage에만 저장되며, Anthropic API 서버 외에는 전송되지 않습니다. */
 
 const STORAGE_KEY = "mock-interview-settings-v1";
