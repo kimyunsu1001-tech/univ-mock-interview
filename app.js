@@ -5,6 +5,8 @@ const STORAGE_KEY = "mock-interview-settings-v1";
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 
 const el = {
+  heroSection: document.getElementById("hero-section"),
+  featuresSection: document.getElementById("features-section"),
   setupScreen: document.getElementById("setup-screen"),
   interviewScreen: document.getElementById("interview-screen"),
   apiKey: document.getElementById("api-key"),
@@ -180,21 +182,50 @@ function saveSettings(s, key, model) {
 }
 
 function addBubble(role, text) {
-  const div = document.createElement("div");
-  div.className = `bubble ${role}`;
-  div.textContent = text;
-  el.messages.appendChild(div);
+  if (role === "system") {
+    const div = document.createElement("div");
+    div.className = "bubble system";
+    div.textContent = text;
+    el.messages.appendChild(div);
+    el.messages.scrollTop = el.messages.scrollHeight;
+    return div;
+  }
+
+  const row = document.createElement("div");
+  row.className = `msg-row ${role}`;
+
+  const avatar = document.createElement("div");
+  avatar.className = "msg-avatar";
+  avatar.textContent = role === "user" ? "🙋" : "🎓";
+
+  const bubble = document.createElement("div");
+  bubble.className = `bubble ${role}`;
+  bubble.textContent = text;
+
+  row.appendChild(avatar);
+  row.appendChild(bubble);
+  el.messages.appendChild(row);
   el.messages.scrollTop = el.messages.scrollHeight;
-  return div;
+  return row;
 }
 
 function addLoadingBubble() {
-  const div = document.createElement("div");
-  div.className = "bubble loading";
-  div.textContent = "면접관이 생각 중...";
-  el.messages.appendChild(div);
+  const row = document.createElement("div");
+  row.className = "msg-row interviewer";
+
+  const avatar = document.createElement("div");
+  avatar.className = "msg-avatar";
+  avatar.textContent = "🎓";
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble loading";
+  bubble.textContent = "면접관이 생각 중...";
+
+  row.appendChild(avatar);
+  row.appendChild(bubble);
+  el.messages.appendChild(row);
   el.messages.scrollTop = el.messages.scrollHeight;
-  return div;
+  return row;
 }
 
 function setWaiting(waiting) {
@@ -297,6 +328,8 @@ function startInterview() {
     ? headerBits.join(" · ") + ` · ${settings.difficulty}`
     : `${settings.difficulty} 난이도`;
 
+  if (el.heroSection) el.heroSection.hidden = true;
+  if (el.featuresSection) el.featuresSection.hidden = true;
   el.setupScreen.hidden = true;
   el.interviewScreen.hidden = false;
   el.chatInput.focus();
@@ -306,6 +339,8 @@ function startInterview() {
 
 function restartInterview() {
   el.interviewScreen.hidden = true;
+  if (el.heroSection) el.heroSection.hidden = false;
+  if (el.featuresSection) el.featuresSection.hidden = false;
   el.setupScreen.hidden = false;
   el.setupError.hidden = true;
 }
