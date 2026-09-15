@@ -61,21 +61,32 @@
     <section id="setup-screen" class="screen">
       <div class="card" id="setup-card">
         <h2 class="card-heading">면접 설정</h2>
-        <p class="card-subheading">본인의 Anthropic API 키로 AI 면접관과 바로 연습을 시작하세요.</p>
+        <p class="card-subheading">API 키 없이 무료로 바로 체험하거나, 본인 키로 무제한 이용하세요.</p>
 
-        <div class="section-label"><span class="num">1</span> API 연결</div>
-
-        <div class="field">
-          <label for="api-key">Anthropic API Key <span class="hint">(본인 키, 브라우저에만 저장됨)</span></label>
-          <input type="password" id="api-key" placeholder="sk-ant-..." autocomplete="off" />
-          <p class="field-help">
-            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">API 키 발급 방법 &rarr;</a>
-          </p>
+        <div class="mode-tabs" role="tablist">
+          <button type="button" id="mode-free-btn" class="mode-tab active" data-mode="free">🎁 무료로 체험하기</button>
+          <button type="button" id="mode-own-btn" class="mode-tab" data-mode="own">🔑 내 API 키 사용</button>
         </div>
+        <p id="mode-desc" class="mode-desc">
+          하루 <strong>14회</strong>까지 API 키 없이 무료로 체험할 수 있어요 (경량 모델 사용, 매일 초기화).
+          더 높은 품질과 무제한 사용을 원하면 본인 API 키를 입력하세요.
+        </p>
 
-        <div class="field">
-          <label for="model">모델 ID <span class="hint">(필요 시 수정 가능)</span></label>
-          <input type="text" id="model" value="claude-sonnet-5" />
+        <div id="api-key-section" hidden>
+          <div class="section-label"><span class="num">1</span> API 연결</div>
+
+          <div class="field">
+            <label for="api-key">Anthropic API Key <span class="hint">(본인 키, 브라우저에만 저장됨)</span></label>
+            <input type="password" id="api-key" placeholder="sk-ant-..." autocomplete="off" />
+            <p class="field-help">
+              <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">API 키 발급 방법 &rarr;</a>
+            </p>
+          </div>
+
+          <div class="field">
+            <label for="model">모델 ID <span class="hint">(필요 시 수정 가능)</span></label>
+            <input type="text" id="model" value="claude-sonnet-5" />
+          </div>
         </div>
 
         <div class="section-label"><span class="num">2</span> 면접 조건</div>

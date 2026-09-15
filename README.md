@@ -10,18 +10,31 @@ AI 면접관과 함께 연습하는 대학 입시 모의면접 웹앱입니다. 
 
 ## 사용 방법
 
-1. [배포된 페이지](https://kimyunsu1001-tech.github.io/univ-mock-interview/)를 열거나 `index.html`을 브라우저로 엽니다.
+이용 모드는 두 가지입니다.
+
+**① 무료로 체험하기 (기본값, API 키 불필요)**
+- 아무 설정 없이 바로 "면접 시작하기"를 누르면 됩니다.
+- [interview-proxy](https://github.com/kimyunsu1001-tech/mock-interview-proxy) Cloudflare
+  Worker를 통해 방문자 IP당 하루 14메시지까지 무료로 이용할 수 있습니다 (경량
+  오픈소스 모델 사용, 매일 초기화).
+
+**② 내 API 키 사용 (더 높은 품질, 무제한)**
+1. "내 API 키 사용" 탭을 선택합니다.
 2. 본인의 [Anthropic API 키](https://console.anthropic.com/settings/keys)를 입력합니다.
    - 키는 브라우저 `localStorage`에만 저장되며, Anthropic API 서버 외에는 전송되지 않습니다.
    - 이 저장소나 배포 서버 어디에도 키가 저장되지 않습니다.
-3. 지원 학과·전형 유형·면접 방식·난이도를 선택하고 "면접 시작하기"를 누릅니다.
-4. 질문에 답변을 입력하며 면접을 진행합니다. 면접이 끝나면 자동으로 평가가 제공됩니다.
+
+공통: 지원 학과·전형 유형·면접 방식·난이도를 선택하고 "면접 시작하기"를
+누르면 실제 면접처럼 질문과 꼬리질문이 이어지고, 면접이 끝나면 자동으로
+항목별 평가가 제공됩니다.
 
 ## 기술 스택
 
-순수 HTML/CSS/JavaScript(빌드 도구 없음)로 작성되어 GitHub Pages 등 정적 호스팅에
-바로 배포할 수 있습니다. 클라이언트에서 [Anthropic Messages API](https://docs.anthropic.com/)를
-직접 호출합니다.
+프론트엔드는 순수 HTML/CSS/JavaScript(빌드 도구 없음)로 작성되어 GitHub
+Pages 등 정적 호스팅에 바로 배포할 수 있습니다. 무료 체험 모드는
+[Cloudflare Worker 프록시](https://github.com/kimyunsu1001-tech/mock-interview-proxy)를
+거쳐 Cloudflare Workers AI를 호출하고, 본인 API 키 모드는 클라이언트에서
+[Anthropic Messages API](https://docs.anthropic.com/)를 직접 호출합니다.
 
 ## 로컬 실행
 

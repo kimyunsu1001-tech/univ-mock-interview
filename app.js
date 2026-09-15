@@ -5,6 +5,8 @@ const STORAGE_KEY = "mock-interview-settings-v1";
 const HISTORY_KEY = "mock-interview-history-v1";
 const MAX_HISTORY = 10;
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
+const PROXY_URL = "https://mock-interview-proxy.kimyunsu1001.workers.dev";
+const FREE_MODEL_LABEL = "무료 체험 모델";
 
 const el = {
   topNav: document.getElementById("top-nav"),
@@ -12,6 +14,10 @@ const el = {
   featuresSection: document.getElementById("features-section"),
   setupScreen: document.getElementById("setup-screen"),
   interviewScreen: document.getElementById("interview-screen"),
+  modeFreeBtn: document.getElementById("mode-free-btn"),
+  modeOwnBtn: document.getElementById("mode-own-btn"),
+  modeDesc: document.getElementById("mode-desc"),
+  apiKeySection: document.getElementById("api-key-section"),
   apiKey: document.getElementById("api-key"),
   model: document.getElementById("model"),
   major: document.getElementById("major"),
@@ -45,6 +51,7 @@ let conversation = []; // { role: "user" | "assistant", content: string }
 let settings = null;
 let apiKey = "";
 let modelId = "";
+let mode = "free"; // "free" | "own"
 let isWaiting = false;
 let turnCount = 0;
 let interviewFinished = false;
@@ -171,6 +178,16 @@ const QUESTION_BANK = {
   ],
 };
 
+function setMode(next) {
+  mode = next;
+  el.modeFreeBtn.classList.toggle("active", mode === "free");
+  el.modeOwnBtn.classList.toggle("active", mode === "own");
+  el.apiKeySection.hidden = mode !== "own";
+  el.modeDesc.textContent =
+    mode === "free"
+      ? "하루 14회까지 API 키 없이 무료로 체험할 수 있어요 (경량 모델 사용, 매일 초기화). 더 높은 품질과 무제한 사용을 원하면 본인 API 키를 입력하세요."
+      : "본인의 Anthropic API 키로 Claude와 무제한으로 연습합니다. 키는 브라우저에만 저장되고 Anthropic API로만 전송됩니다.";
+}
 
 function loadSavedSettings() {
   try {
@@ -262,26 +279,45 @@ async function callClaude(userText) {
   setWaiting(true);
 
   try {
-    const res = await fetch(ANTHROPIC_API_URL, {
+    const url = mode === "free" ? PROXY_URL : ANTHROPIC_API_URL;
+    const headers =
+      mode === "free"
+        ? { "content-type": "application/json" }
+        : {
+            "content-type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+            "anthropic-dangerous-direct-browser-access": "true",
+          };
+    const requestBody =
+      mode === "free"
+        ? { system: buildSystemPrompt(settings), messages: conversation }
+        : {
+            model: modelId,
+            max_tokens: 1024,
+            system: buildSystemPrompt(settings),
+            messages: conversation,
+          };
+
+    const res = await fetch(url, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true",
-      },
-      body: JSON.stringify({
-        model: modelId,
-        max_tokens: 1024,
-        system: buildSystemPrompt(settings),
-        messages: conversation,
-      }),
+      headers,
+      body: JSON.stringify(requestBody),
     });
 
     const data = await res.json();
 
     if (!res.ok) {
-      const message = data?.error?.message || `API 오류 (HTTP ${res.status})`;
+      if (mode === "free" && res.status === 429) {
+        loadingBubble.remove();
+        conversation.pop(); // 실패한 요청의 사용자 메시지는 대화 기록에서 제거
+        addBubble(
+          "system",
+          `${data?.error?.message || "오늘의 무료 체험 횟수를 모두 사용했습니다."}\n"새 면접" 버튼을 눌러 "내 API 키 사용" 모드로 전환하면 계속 이용할 수 있습니다.`
+        );
+        return;
+      }
+      const message = data?.error?.message || `요청 오류 (HTTP ${res.status})`;
       throw new Error(message);
     }
 
@@ -300,10 +336,11 @@ async function callClaude(userText) {
     }
   } catch (err) {
     loadingBubble.remove();
-    addBubble(
-      "system",
-      `오류가 발생했습니다: ${err.message}\nAPI 키와 모델 ID를 확인한 뒤 다시 시도해 주세요.`
-    );
+    const hint =
+      mode === "free"
+        ? "잠시 후 다시 시도해 주세요. 계속 실패하면 '내 API 키 사용' 모드로 전환해 보세요."
+        : "API 키와 모델 ID를 확인한 뒤 다시 시도해 주세요.";
+    addBubble("system", `오류가 발생했습니다: ${err.message}\n${hint}`);
   } finally {
     setWaiting(false);
     el.chatInput.focus();
@@ -476,23 +513,25 @@ function setupSpeechInput() {
 }
 
 function startInterview() {
-  const key = el.apiKey.value.trim();
-  const model = el.model.value.trim();
+  if (mode === "own") {
+    const key = el.apiKey.value.trim();
+    const model = el.model.value.trim();
 
-  if (!key) {
-    el.setupError.textContent = "Anthropic API 키를 입력해 주세요.";
-    el.setupError.hidden = false;
-    return;
-  }
-  if (!model) {
-    el.setupError.textContent = "모델 ID를 입력해 주세요.";
-    el.setupError.hidden = false;
-    return;
+    if (!key) {
+      el.setupError.textContent = "Anthropic API 키를 입력해 주세요.";
+      el.setupError.hidden = false;
+      return;
+    }
+    if (!model) {
+      el.setupError.textContent = "모델 ID를 입력해 주세요.";
+      el.setupError.hidden = false;
+      return;
+    }
+    apiKey = key;
+    modelId = model;
   }
   el.setupError.hidden = true;
 
-  apiKey = key;
-  modelId = model;
   settings = readSettingsFromForm();
   saveSettings(settings, apiKey, modelId);
 
@@ -504,7 +543,7 @@ function startInterview() {
   const headerBits = [settings.major, settings.admissionType, settings.interviewStyle].filter(
     Boolean
   );
-  el.headerTitle.textContent = "모의면접 진행 중";
+  el.headerTitle.textContent = mode === "free" ? "모의면접 진행 중 (무료 체험)" : "모의면접 진행 중";
   el.headerSub.textContent = headerBits.length
     ? headerBits.join(" · ") + ` · ${settings.difficulty}`
     : `${settings.difficulty} 난이도`;
@@ -685,6 +724,8 @@ el.copyBtn.addEventListener("click", copyTranscript);
 el.major.addEventListener("input", () => {
   if (!el.bankPanel.hidden) renderLatestLinks();
 });
+el.modeFreeBtn.addEventListener("click", () => setMode("free"));
+el.modeOwnBtn.addEventListener("click", () => setMode("own"));
 el.startBtn.addEventListener("click", startInterview);
 el.restartBtn.addEventListener("click", restartInterview);
 el.chatForm.addEventListener("submit", handleSubmit);
@@ -695,6 +736,7 @@ el.chatInput.addEventListener("keydown", (e) => {
   }
 });
 
+setMode("free");
 loadSavedSettings();
 setupSpeechInput();
 if (loadHistory().length > 0 && el.historyToggle) el.historyToggle.hidden = false;
