@@ -2,9 +2,12 @@
    API 키는 브라우저 localStorage에만 저장되며, Anthropic API 서버 외에는 전송되지 않습니다. */
 
 const STORAGE_KEY = "mock-interview-settings-v1";
+const HISTORY_KEY = "mock-interview-history-v1";
+const MAX_HISTORY = 10;
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 
 const el = {
+  topNav: document.getElementById("top-nav"),
   heroSection: document.getElementById("hero-section"),
   featuresSection: document.getElementById("features-section"),
   setupScreen: document.getElementById("setup-screen"),
@@ -15,14 +18,22 @@ const el = {
   admissionType: document.getElementById("admission-type"),
   interviewStyle: document.getElementById("interview-style"),
   difficulty: document.getElementById("difficulty"),
+  personalInfo: document.getElementById("personal-info"),
   startBtn: document.getElementById("start-btn"),
   setupError: document.getElementById("setup-error"),
   bankToggle: document.getElementById("bank-toggle"),
   bankPanel: document.getElementById("question-bank"),
   bankCategories: document.getElementById("bank-categories"),
   latestLinks: document.getElementById("latest-links"),
+  historyToggle: document.getElementById("history-toggle"),
+  historyPanel: document.getElementById("history-panel"),
+  historyList: document.getElementById("history-list"),
   headerTitle: document.getElementById("header-title"),
   headerSub: document.getElementById("header-sub"),
+  chatTimer: document.getElementById("chat-timer"),
+  progressFill: document.getElementById("progress-fill"),
+  copyBtn: document.getElementById("copy-btn"),
+  micBtn: document.getElementById("mic-btn"),
   restartBtn: document.getElementById("restart-btn"),
   messages: document.getElementById("messages"),
   chatForm: document.getElementById("chat-form"),
@@ -35,12 +46,19 @@ let settings = null;
 let apiKey = "";
 let modelId = "";
 let isWaiting = false;
+let turnCount = 0;
+let interviewFinished = false;
+let timerInterval = null;
+let startTime = 0;
 
 function buildSystemPrompt(s) {
   const major = s.major || "(미설정)";
   const admissionType = s.admissionType || "(미설정)";
   const interviewStyle = s.interviewStyle || "(미설정)";
   const difficulty = s.difficulty || "기본";
+  const personalInfoBlock = s.personalInfo
+    ? `\n[지원자가 제공한 자기소개서·학생부 핵심 내용]\n${s.personalInfo}\n이 내용을 최우선으로 참고해 지원동기·활동 경험 질문을 이 내용에 맞춰 구체적으로 구성하세요. 지어내지 말고 위에 적힌 내용을 바탕으로만 질문하세요.\n`
+    : "";
 
   return `당신은 대한민국 대학 입학사정관 출신의 노련한 입시 면접관입니다.
 실제 대입 면접(학생부교과/학생부종합/논술 등 서류·인성 면접)에서
@@ -53,7 +71,7 @@ function buildSystemPrompt(s) {
 - 전형 유형: ${admissionType}
 - 면접 방식: ${interviewStyle}
 - 난이도: ${difficulty}
-
+${personalInfoBlock}
 ## 말투·태도 (실제 면접관 화법)
 - 처음과 끝을 제외하면 군더더기 설명 없이 담담하고 절제된 어조를
   씁니다. 감탄사나 과한 칭찬("정말 훌륭하네요!" 등)은 쓰지 않습니다.
@@ -165,6 +183,7 @@ function loadSavedSettings() {
     if (saved.admissionType) el.admissionType.value = saved.admissionType;
     if (saved.interviewStyle) el.interviewStyle.value = saved.interviewStyle;
     if (saved.difficulty) el.difficulty.value = saved.difficulty;
+    if (saved.personalInfo) el.personalInfo.value = saved.personalInfo;
   } catch (e) {
     /* ignore corrupt storage */
   }
@@ -275,6 +294,10 @@ async function callClaude(userText) {
     loadingBubble.remove();
     conversation.push({ role: "assistant", content: text });
     addBubble("interviewer", text);
+
+    if (!interviewFinished && (text.includes("총평") || text.includes("항목별 점수"))) {
+      finishInterview();
+    }
   } catch (err) {
     loadingBubble.remove();
     addBubble(
@@ -293,7 +316,163 @@ function readSettingsFromForm() {
     admissionType: el.admissionType.value,
     interviewStyle: el.interviewStyle.value,
     difficulty: el.difficulty.value || "기본",
+    personalInfo: el.personalInfo.value.trim(),
   };
+}
+
+function formatElapsed(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const m = String(Math.floor(totalSec / 60)).padStart(2, "0");
+  const s = String(totalSec % 60).padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+function startTimer() {
+  startTime = Date.now();
+  el.chatTimer.textContent = "⏱ 00:00";
+  clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    el.chatTimer.textContent = `⏱ ${formatElapsed(Date.now() - startTime)}`;
+  }, 1000);
+}
+
+function stopTimer() {
+  clearInterval(timerInterval);
+  timerInterval = null;
+}
+
+function updateProgress() {
+  const EXPECTED_TURNS = 12;
+  const pct = Math.min((turnCount / EXPECTED_TURNS) * 100, interviewFinished ? 100 : 96);
+  el.progressFill.style.width = `${pct}%`;
+}
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveHistory(list) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, MAX_HISTORY)));
+  } catch (e) {
+    /* storage unavailable — non-fatal */
+  }
+}
+
+function buildTranscriptText() {
+  const headerBits = [settings.major, settings.admissionType, settings.interviewStyle, settings.difficulty]
+    .filter(Boolean)
+    .join(" · ");
+  const lines = [`[모의면접 AI] ${headerBits}`, ""];
+  conversation.forEach((m) => {
+    if (m.role === "user" && m.content === "면접을 시작해 주세요.") return;
+    lines.push(`${m.role === "user" ? "지원자" : "면접관"}: ${m.content}`);
+    lines.push("");
+  });
+  return lines.join("\n").trim();
+}
+
+function finishInterview() {
+  interviewFinished = true;
+  stopTimer();
+  updateProgress();
+
+  const entry = {
+    id: `${Date.now()}`,
+    date: new Date().toISOString(),
+    major: settings.major,
+    admissionType: settings.admissionType,
+    difficulty: settings.difficulty,
+    transcript: buildTranscriptText(),
+  };
+  const list = loadHistory();
+  list.unshift(entry);
+  saveHistory(list);
+
+  if (el.historyToggle) el.historyToggle.hidden = false;
+}
+
+async function copyTranscript() {
+  const text = buildTranscriptText();
+  try {
+    await navigator.clipboard.writeText(text);
+    flashCopyButton();
+  } catch (e) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand("copy");
+      flashCopyButton();
+    } catch (e2) {
+      addBubble("system", "복사에 실패했습니다. 직접 선택해서 복사해 주세요.");
+    }
+    document.body.removeChild(ta);
+  }
+}
+
+function flashCopyButton() {
+  const original = el.copyBtn.textContent;
+  el.copyBtn.textContent = "복사됨 ✓";
+  setTimeout(() => {
+    el.copyBtn.textContent = original;
+  }, 1500);
+}
+
+/* ---- 음성 입력 (Web Speech API) ---- */
+const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognizer = null;
+let isRecording = false;
+
+function setupSpeechInput() {
+  if (!SpeechRecognitionImpl || !el.micBtn) return;
+  el.micBtn.hidden = false;
+
+  recognizer = new SpeechRecognitionImpl();
+  recognizer.lang = "ko-KR";
+  recognizer.continuous = false;
+  recognizer.interimResults = false;
+
+  recognizer.onresult = (event) => {
+    const transcript = Array.from(event.results)
+      .map((r) => r[0].transcript)
+      .join(" ");
+    const prefix = el.chatInput.value.trim();
+    el.chatInput.value = prefix ? `${prefix} ${transcript}` : transcript;
+  };
+
+  recognizer.onend = () => {
+    isRecording = false;
+    el.micBtn.classList.remove("recording");
+  };
+
+  recognizer.onerror = () => {
+    isRecording = false;
+    el.micBtn.classList.remove("recording");
+  };
+
+  el.micBtn.addEventListener("click", () => {
+    if (isWaiting) return;
+    if (isRecording) {
+      recognizer.stop();
+      return;
+    }
+    try {
+      recognizer.start();
+      isRecording = true;
+      el.micBtn.classList.add("recording");
+    } catch (e) {
+      /* already started or mic permission denied — ignore */
+    }
+  });
 }
 
 function startInterview() {
@@ -318,6 +497,8 @@ function startInterview() {
   saveSettings(settings, apiKey, modelId);
 
   conversation = [];
+  turnCount = 0;
+  interviewFinished = false;
   el.messages.innerHTML = "";
 
   const headerBits = [settings.major, settings.admissionType, settings.interviewStyle].filter(
@@ -328,21 +509,29 @@ function startInterview() {
     ? headerBits.join(" · ") + ` · ${settings.difficulty}`
     : `${settings.difficulty} 난이도`;
 
+  if (el.topNav) el.topNav.hidden = true;
   if (el.heroSection) el.heroSection.hidden = true;
   if (el.featuresSection) el.featuresSection.hidden = true;
   el.setupScreen.hidden = true;
   el.interviewScreen.hidden = false;
+  window.scrollTo(0, 0);
   el.chatInput.focus();
 
+  startTimer();
+  updateProgress();
   callClaude("면접을 시작해 주세요.");
 }
 
 function restartInterview() {
+  stopTimer();
   el.interviewScreen.hidden = true;
+  if (el.topNav) el.topNav.hidden = false;
   if (el.heroSection) el.heroSection.hidden = false;
   if (el.featuresSection) el.featuresSection.hidden = false;
   el.setupScreen.hidden = false;
   el.setupError.hidden = true;
+  window.scrollTo(0, 0);
+  if (loadHistory().length > 0 && el.historyToggle) el.historyToggle.hidden = false;
 }
 
 function handleSubmit(e) {
@@ -352,6 +541,8 @@ function handleSubmit(e) {
   if (!text) return;
   addBubble("user", text);
   el.chatInput.value = "";
+  turnCount += 1;
+  updateProgress();
   callClaude(text);
 }
 
@@ -414,7 +605,83 @@ function toggleQuestionBank() {
   }
 }
 
+function formatHistoryDate(iso) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(
+    d.getDate()
+  ).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(
+    2,
+    "0"
+  )}`;
+}
+
+function renderHistoryList() {
+  const list = loadHistory();
+  if (list.length === 0) {
+    el.historyList.innerHTML = `<p class="history-empty">아직 완료된 면접 기록이 없습니다.</p>`;
+    return;
+  }
+
+  el.historyList.innerHTML = list
+    .map((item) => {
+      const bits = [item.major, item.admissionType, item.difficulty].filter(Boolean).join(" · ");
+      return `
+        <div class="history-item" data-id="${item.id}">
+          <div class="history-item-head" data-action="toggle">
+            <div>
+              <div class="history-item-title">${escapeHtml(bits || "일반 면접")}</div>
+              <div class="history-item-meta">${formatHistoryDate(item.date)}</div>
+            </div>
+            <div class="history-item-actions">
+              <button type="button" data-action="copy">복사</button>
+              <button type="button" data-action="delete">삭제</button>
+            </div>
+          </div>
+          <div class="history-item-body" hidden>${escapeHtml(item.transcript)}</div>
+        </div>`;
+    })
+    .join("");
+}
+
+function toggleHistory() {
+  const willShow = el.historyPanel.hidden;
+  el.historyPanel.hidden = !willShow;
+  el.historyToggle.textContent = willShow ? "지난 면접 기록 닫기 ▲" : "지난 면접 기록 보기 ▼";
+  if (willShow) renderHistoryList();
+}
+
+el.historyList.addEventListener("click", (e) => {
+  const itemEl = e.target.closest(".history-item");
+  if (!itemEl) return;
+  const id = itemEl.dataset.id;
+  const action = e.target.dataset.action;
+
+  if (action === "toggle" || e.target.closest('[data-action="toggle"]')) {
+    const body = itemEl.querySelector(".history-item-body");
+    body.hidden = !body.hidden;
+    return;
+  }
+  if (action === "delete") {
+    const list = loadHistory().filter((h) => h.id !== id);
+    saveHistory(list);
+    renderHistoryList();
+    if (list.length === 0) el.historyToggle.hidden = true;
+    return;
+  }
+  if (action === "copy") {
+    const item = loadHistory().find((h) => h.id === id);
+    if (!item) return;
+    navigator.clipboard?.writeText(item.transcript).catch(() => {});
+    e.target.textContent = "복사됨";
+    setTimeout(() => {
+      e.target.textContent = "복사";
+    }, 1200);
+  }
+});
+
 el.bankToggle.addEventListener("click", toggleQuestionBank);
+el.historyToggle.addEventListener("click", toggleHistory);
+el.copyBtn.addEventListener("click", copyTranscript);
 el.major.addEventListener("input", () => {
   if (!el.bankPanel.hidden) renderLatestLinks();
 });
@@ -429,3 +696,5 @@ el.chatInput.addEventListener("keydown", (e) => {
 });
 
 loadSavedSettings();
+setupSpeechInput();
+if (loadHistory().length > 0 && el.historyToggle) el.historyToggle.hidden = false;

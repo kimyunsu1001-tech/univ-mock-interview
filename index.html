@@ -15,7 +15,7 @@
 <body>
   <div id="app">
 
-    <header class="top-nav">
+    <header class="top-nav" id="top-nav">
       <a href="index.html" class="brand"><span class="brand-mark">🎓</span>모의면접 AI</a>
       <nav>
         <a href="guide.html">가이드</a>
@@ -117,6 +117,12 @@
           </div>
         </div>
 
+        <div class="section-label"><span class="num">3</span> 맞춤 출제 <span class="hint" style="text-transform:none; font-weight:400;">(선택)</span></div>
+        <div class="field">
+          <label for="personal-info">자기소개서·학생부 핵심 내용 <span class="hint">(붙여넣으면 그 내용 기반으로 질문)</span></label>
+          <textarea id="personal-info" rows="3" placeholder="예: 3년간 교내 환경동아리 부장, 탄소중립 캠페인 기획, 관련 소논문 작성 경험 등 강조하고 싶은 활동을 붙여넣으세요."></textarea>
+        </div>
+
         <button id="start-btn" class="primary-btn">면접 시작하기</button>
         <p id="setup-error" class="error-msg" hidden></p>
 
@@ -127,6 +133,11 @@
             <h4>최신 기출·후기 찾아보기 <span class="hint">(지원 학과 입력 시 맞춤 검색)</span></h4>
             <div id="latest-links" class="latest-links"></div>
           </div>
+        </div>
+
+        <button type="button" id="history-toggle" class="link-btn" hidden>지난 면접 기록 보기 ▼</button>
+        <div id="history-panel" class="question-bank" hidden>
+          <div id="history-list"></div>
         </div>
       </div>
       <p class="bank-note">
@@ -147,12 +158,19 @@
             <span id="header-sub" class="hint"></span>
           </div>
         </div>
-        <button id="restart-btn" class="ghost-btn" title="새 면접 시작">새 면접</button>
+        <div class="chat-header-right">
+          <span id="chat-timer" class="chat-timer">⏱ 00:00</span>
+          <button type="button" id="copy-btn" class="ghost-btn" title="대화 내용 복사">복사</button>
+          <button id="restart-btn" class="ghost-btn" title="새 면접 시작">새 면접</button>
+        </div>
       </header>
+
+      <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
 
       <div id="messages" class="messages"></div>
 
       <form id="chat-form" class="chat-input-row">
+        <button type="button" id="mic-btn" class="mic-btn" title="음성으로 답변" hidden>🎤</button>
         <textarea id="chat-input" placeholder="답변을 입력하세요..." rows="2"></textarea>
         <button type="submit" id="send-btn" class="primary-btn">전송</button>
       </form>
