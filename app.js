@@ -25,6 +25,8 @@ const el = {
   interviewStyle: document.getElementById("interview-style"),
   difficulty: document.getElementById("difficulty"),
   personalInfo: document.getElementById("personal-info"),
+  personalInfoFile: document.getElementById("personal-info-file"),
+  fileUploadStatus: document.getElementById("file-upload-status"),
   startBtn: document.getElementById("start-btn"),
   setupError: document.getElementById("setup-error"),
   bankToggle: document.getElementById("bank-toggle"),
@@ -560,10 +562,7 @@ function setVoiceMode(next) {
     /* storage unavailable — non-fatal */
   }
   if (el.voiceModeCheckbox) el.voiceModeCheckbox.checked = voiceMode;
-  if (el.voiceModeBtn) {
-    el.voiceModeBtn.classList.toggle("active", voiceMode);
-    el.voiceModeBtn.textContent = voiceMode ? "🎙️ 음성모드 ON" : "🎙️ 음성모드";
-  }
+  if (el.voiceModeBtn) el.voiceModeBtn.classList.toggle("active", voiceMode);
   if (!voiceMode) {
     window.speechSynthesis?.cancel();
     if (isRecording) recognizer?.stop();
@@ -652,15 +651,87 @@ function setupSpeechInput() {
     }
     if (el.voiceModeCheckbox) el.voiceModeCheckbox.checked = savedVoiceMode;
     voiceMode = savedVoiceMode;
-    if (el.voiceModeBtn) {
-      el.voiceModeBtn.classList.toggle("active", voiceMode);
-      el.voiceModeBtn.textContent = voiceMode ? "🎙️ 음성모드 ON" : "🎙️ 음성모드";
-    }
+    if (el.voiceModeBtn) el.voiceModeBtn.classList.toggle("active", voiceMode);
 
     el.voiceModeCheckbox?.addEventListener("change", () => {
       setVoiceMode(el.voiceModeCheckbox.checked);
     });
     el.voiceModeBtn?.addEventListener("click", () => setVoiceMode(!voiceMode));
+  }
+}
+
+/* ---- 생기부·자소서 파일 첨부 (PDF/TXT → 텍스트 추출) ----
+   전부 브라우저 안에서만 처리한다: PDF.js 라이브러리 코드만 CDN에서
+   불러오고, 파일 내용 자체는 어디로도 전송되지 않는다. */
+const PDFJS_VERSION = "6.3.289";
+const MAX_PERSONAL_INFO_CHARS = 6000;
+let pdfjsLibPromise = null;
+
+function loadPdfJs() {
+  if (!pdfjsLibPromise) {
+    pdfjsLibPromise = import(
+      `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.mjs`
+    ).then((lib) => {
+      lib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.mjs`;
+      return lib;
+    });
+  }
+  return pdfjsLibPromise;
+}
+
+async function extractPdfText(file) {
+  const pdfjsLib = await loadPdfJs();
+  const buffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+  const pageTexts = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    pageTexts.push(content.items.map((item) => item.str).join(" "));
+  }
+  return pageTexts.join("\n").trim();
+}
+
+function setFileUploadStatus(text, kind) {
+  if (!el.fileUploadStatus) return;
+  el.fileUploadStatus.textContent = text;
+  el.fileUploadStatus.className = `file-upload-status${kind ? ` ${kind}` : ""}`;
+}
+
+async function handlePersonalInfoFile() {
+  const file = el.personalInfoFile.files?.[0];
+  if (!file) return;
+
+  setFileUploadStatus(`"${file.name}" 처리 중...`);
+
+  try {
+    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+    let text = isPdf ? await extractPdfText(file) : await file.text();
+    text = text.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+
+    if (!text) {
+      setFileUploadStatus(
+        "텍스트를 추출하지 못했습니다 (스캔 이미지 PDF일 수 있어요). 내용을 직접 붙여넣어 주세요.",
+        "error"
+      );
+      return;
+    }
+
+    const truncated = text.length > MAX_PERSONAL_INFO_CHARS;
+    el.personalInfo.value = truncated ? text.slice(0, MAX_PERSONAL_INFO_CHARS) : text;
+    setFileUploadStatus(
+      `"${file.name}"에서 ${el.personalInfo.value.length.toLocaleString()}자 추출 완료${
+        truncated ? " (내용이 길어 앞부분만 사용했어요)" : ""
+      }. 필요하면 아래에서 직접 수정하세요.`,
+      "success"
+    );
+  } catch (e) {
+    setFileUploadStatus(
+      "파일을 읽는 중 오류가 발생했습니다. 다른 파일을 시도하거나 내용을 직접 붙여넣어 주세요.",
+      "error"
+    );
+  } finally {
+    el.personalInfoFile.value = "";
   }
 }
 
@@ -879,6 +950,7 @@ el.copyBtn.addEventListener("click", copyTranscript);
 el.major.addEventListener("input", () => {
   if (!el.bankPanel.hidden) renderLatestLinks();
 });
+el.personalInfoFile?.addEventListener("change", handlePersonalInfoFile);
 el.modeFreeBtn.addEventListener("click", () => setMode("free"));
 el.modeOwnBtn.addEventListener("click", () => setMode("own"));
 el.startBtn.addEventListener("click", startInterview);

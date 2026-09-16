@@ -130,16 +130,23 @@
 
         <div class="section-label"><span class="num">3</span> 맞춤 출제 <span class="hint" style="text-transform:none; font-weight:400;">(선택)</span></div>
         <div class="field">
-          <label for="personal-info">자기소개서·학생부 핵심 내용 <span class="hint">(붙여넣으면 그 내용 기반으로 질문)</span></label>
+          <label for="personal-info">자기소개서·학생부 핵심 내용 <span class="hint">(붙여넣거나 파일을 첨부하면 그 내용 기반으로 질문)</span></label>
+          <div class="file-upload-row">
+            <label for="personal-info-file" class="file-upload-btn">📎 생기부·자소서 파일 첨부</label>
+            <input type="file" id="personal-info-file" accept=".pdf,.txt,application/pdf,text/plain" hidden />
+            <span id="file-upload-status" class="file-upload-status"></span>
+          </div>
           <textarea id="personal-info" rows="3" placeholder="예: 3년간 교내 환경동아리 부장, 탄소중립 캠페인 기획, 관련 소논문 작성 경험 등 강조하고 싶은 활동을 붙여넣으세요."></textarea>
+          <p class="field-help">PDF·TXT 파일을 첨부하면 텍스트를 자동으로 추출해 위 칸에 채워드려요 (HWP는 지원하지 않으니 텍스트를 복사해 붙여넣어 주세요). 파일은 서버로 전송되지 않고 브라우저 안에서만 처리됩니다.</p>
         </div>
 
-        <div class="field voice-mode-field" id="voice-mode-field" hidden>
-          <label class="switch-label" for="voice-mode-checkbox">
+        <label class="toggle-row" id="voice-mode-field" for="voice-mode-checkbox" hidden>
+          <span class="toggle-row-text">🎙️ <strong>음성 면접 모드</strong>로 시작<br />면접관 질문을 음성으로 듣고, 답변도 말하면 자동으로 전송됩니다 (실제 대면 면접처럼 진행)</span>
+          <span class="toggle-switch">
             <input type="checkbox" id="voice-mode-checkbox" />
-            <span>🎙️ <strong>음성 면접 모드</strong>로 시작 — 면접관 질문을 음성으로 듣고, 답변도 말하면 자동으로 전송됩니다 (실제 대면 면접처럼 진행)</span>
-          </label>
-        </div>
+            <span class="toggle-slider"></span>
+          </span>
+        </label>
 
         <button id="start-btn" class="primary-btn">면접 시작하기</button>
         <p id="setup-error" class="error-msg" hidden></p>
@@ -178,7 +185,10 @@
         </div>
         <div class="chat-header-right">
           <span id="chat-timer" class="chat-timer">⏱ 00:00</span>
-          <button type="button" id="voice-mode-btn" class="ghost-btn" title="음성 면접 모드 켜기/끄기" hidden>🎙️ 음성모드</button>
+          <button type="button" id="voice-mode-btn" class="voice-toggle-btn" title="음성 면접 모드 켜기/끄기" hidden>
+            <span class="voice-toggle-dot"></span>
+            <span>🎙️ 음성모드</span>
+          </button>
           <button type="button" id="copy-btn" class="ghost-btn" title="대화 내용 복사">복사</button>
           <button id="restart-btn" class="ghost-btn" title="새 면접 시작">새 면접</button>
         </div>
