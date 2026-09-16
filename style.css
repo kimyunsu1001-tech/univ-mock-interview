@@ -711,8 +711,8 @@ a { color: inherit; }
 }
 
 @media (max-width: 480px) {
-  .voice-toggle-btn span:last-child { display: none; }
-  .voice-toggle-btn { padding: 7px 8px; }
+  .voice-toggle-label { display: none; }
+  .voice-toggle-btn { padding: 7px 9px; }
 }
 
 .error-msg {
