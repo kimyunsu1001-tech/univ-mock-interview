@@ -40,6 +40,9 @@ const el = {
   progressFill: document.getElementById("progress-fill"),
   copyBtn: document.getElementById("copy-btn"),
   micBtn: document.getElementById("mic-btn"),
+  voiceModeField: document.getElementById("voice-mode-field"),
+  voiceModeCheckbox: document.getElementById("voice-mode-checkbox"),
+  voiceModeBtn: document.getElementById("voice-mode-btn"),
   restartBtn: document.getElementById("restart-btn"),
   messages: document.getElementById("messages"),
   chatForm: document.getElementById("chat-form"),
@@ -52,6 +55,7 @@ let settings = null;
 let apiKey = "";
 let modelId = "";
 let mode = "free"; // "free" | "own"
+let voiceMode = false;
 let isWaiting = false;
 let turnCount = 0;
 let interviewFinished = false;
@@ -375,6 +379,7 @@ async function callClaude(userText) {
     loadingBubble.remove();
     conversation.push({ role: "assistant", content: text });
     addBubble("interviewer", text);
+    if (voiceMode) speak(text);
 
     if (!interviewFinished && (text.includes("총평") || text.includes("항목별 점수"))) {
       finishInterview();
@@ -509,52 +514,154 @@ function flashCopyButton() {
   }, 1500);
 }
 
-/* ---- 음성 입력 (Web Speech API) ---- */
+/* ---- 음성 입력/출력 (Web Speech API) ----
+   음성 면접 모드에서는 면접관 질문을 음성으로 읽어주고(TTS), 답변도
+   음성으로 받아(STT) 자동 전송함으로써 실제 대면 면접과 유사한 흐름을
+   재현한다. autoCaptureActive는 시스템이 자동으로 시작한 녹음인지
+   (자동 전송 대상) 사용자가 마이크 버튼을 직접 눌러 시작한 수동 입력인지
+   (텍스트만 채우고 직접 전송 버튼을 누르게 함) 구분하기 위한 플래그다. */
 const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognizer = null;
 let isRecording = false;
+let autoCaptureActive = false;
+
+function speak(text) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = "ko-KR";
+  utter.rate = 1.0;
+  utter.pitch = 1.0;
+  const koVoice = window.speechSynthesis.getVoices().find((v) => v.lang && v.lang.startsWith("ko"));
+  if (koVoice) utter.voice = koVoice;
+  utter.onend = () => {
+    if (voiceMode && !interviewFinished && !isWaiting) startVoiceCapture();
+  };
+  window.speechSynthesis.speak(utter);
+}
+
+function startVoiceCapture() {
+  if (!recognizer || isRecording || isWaiting) return;
+  autoCaptureActive = true;
+  try {
+    recognizer.start();
+    isRecording = true;
+    el.micBtn.classList.add("recording");
+  } catch (e) {
+    autoCaptureActive = false;
+  }
+}
+
+function setVoiceMode(next) {
+  voiceMode = next;
+  try {
+    localStorage.setItem("mock-interview-voice-mode", voiceMode ? "1" : "0");
+  } catch (e) {
+    /* storage unavailable — non-fatal */
+  }
+  if (el.voiceModeCheckbox) el.voiceModeCheckbox.checked = voiceMode;
+  if (el.voiceModeBtn) {
+    el.voiceModeBtn.classList.toggle("active", voiceMode);
+    el.voiceModeBtn.textContent = voiceMode ? "🎙️ 음성모드 ON" : "🎙️ 음성모드";
+  }
+  if (!voiceMode) {
+    window.speechSynthesis?.cancel();
+    if (isRecording) recognizer?.stop();
+  } else {
+    const last = conversation[conversation.length - 1];
+    if (last && last.role === "assistant" && !isWaiting && !interviewFinished) {
+      speak(last.content);
+    }
+  }
+}
 
 function setupSpeechInput() {
-  if (!SpeechRecognitionImpl || !el.micBtn) return;
-  el.micBtn.hidden = false;
+  if (SpeechRecognitionImpl && el.micBtn) {
+    el.micBtn.hidden = false;
 
-  recognizer = new SpeechRecognitionImpl();
-  recognizer.lang = "ko-KR";
-  recognizer.continuous = false;
-  recognizer.interimResults = false;
+    recognizer = new SpeechRecognitionImpl();
+    recognizer.lang = "ko-KR";
+    recognizer.continuous = false;
+    recognizer.interimResults = false;
 
-  recognizer.onresult = (event) => {
-    const transcript = Array.from(event.results)
-      .map((r) => r[0].transcript)
-      .join(" ");
-    const prefix = el.chatInput.value.trim();
-    el.chatInput.value = prefix ? `${prefix} ${transcript}` : transcript;
-  };
+    recognizer.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map((r) => r[0].transcript)
+        .join(" ");
+      if (autoCaptureActive) {
+        el.chatInput.value = transcript;
+      } else {
+        const prefix = el.chatInput.value.trim();
+        el.chatInput.value = prefix ? `${prefix} ${transcript}` : transcript;
+      }
+    };
 
-  recognizer.onend = () => {
-    isRecording = false;
-    el.micBtn.classList.remove("recording");
-  };
+    recognizer.onend = () => {
+      isRecording = false;
+      el.micBtn.classList.remove("recording");
+      if (autoCaptureActive) {
+        autoCaptureActive = false;
+        const text = el.chatInput.value.trim();
+        if (text) {
+          el.chatForm.requestSubmit();
+        } else if (voiceMode) {
+          addBubble("system", "음성이 인식되지 않았어요. 마이크 버튼을 눌러 다시 답변해 주세요.");
+        }
+      }
+    };
 
-  recognizer.onerror = () => {
-    isRecording = false;
-    el.micBtn.classList.remove("recording");
-  };
+    recognizer.onerror = (event) => {
+      isRecording = false;
+      el.micBtn.classList.remove("recording");
+      if (autoCaptureActive) {
+        autoCaptureActive = false;
+        if (voiceMode) {
+          addBubble(
+            "system",
+            `음성 인식에 실패했습니다 (${event.error || "오류"}). 마이크 버튼을 눌러 다시 시도해 주세요.`
+          );
+        }
+      }
+    };
 
-  el.micBtn.addEventListener("click", () => {
-    if (isWaiting) return;
-    if (isRecording) {
-      recognizer.stop();
-      return;
-    }
+    el.micBtn.addEventListener("click", () => {
+      if (isWaiting) return;
+      if (isRecording) {
+        recognizer.stop();
+        return;
+      }
+      autoCaptureActive = false;
+      try {
+        recognizer.start();
+        isRecording = true;
+        el.micBtn.classList.add("recording");
+      } catch (e) {
+        /* already started or mic permission denied — ignore */
+      }
+    });
+  }
+
+  if (SpeechRecognitionImpl && window.speechSynthesis) {
+    if (el.voiceModeField) el.voiceModeField.hidden = false;
+    if (el.voiceModeBtn) el.voiceModeBtn.hidden = false;
+    let savedVoiceMode = false;
     try {
-      recognizer.start();
-      isRecording = true;
-      el.micBtn.classList.add("recording");
+      savedVoiceMode = localStorage.getItem("mock-interview-voice-mode") === "1";
     } catch (e) {
-      /* already started or mic permission denied — ignore */
+      /* ignore */
     }
-  });
+    if (el.voiceModeCheckbox) el.voiceModeCheckbox.checked = savedVoiceMode;
+    voiceMode = savedVoiceMode;
+    if (el.voiceModeBtn) {
+      el.voiceModeBtn.classList.toggle("active", voiceMode);
+      el.voiceModeBtn.textContent = voiceMode ? "🎙️ 음성모드 ON" : "🎙️ 음성모드";
+    }
+
+    el.voiceModeCheckbox?.addEventListener("change", () => {
+      setVoiceMode(el.voiceModeCheckbox.checked);
+    });
+    el.voiceModeBtn?.addEventListener("click", () => setVoiceMode(!voiceMode));
+  }
 }
 
 function startInterview() {
@@ -608,6 +715,9 @@ function startInterview() {
 
 function restartInterview() {
   stopTimer();
+  window.speechSynthesis?.cancel();
+  if (isRecording) recognizer?.stop();
+  autoCaptureActive = false;
   el.interviewScreen.hidden = true;
   if (el.topNav) el.topNav.hidden = false;
   if (el.heroSection) el.heroSection.hidden = false;

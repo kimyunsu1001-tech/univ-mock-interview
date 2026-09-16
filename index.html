@@ -42,8 +42,8 @@
     <div class="features" id="features-section">
       <div class="feature-card">
         <div class="icon">🗣️</div>
-        <h3>실제 면접 진행 흐름</h3>
-        <p>자기소개 → 지원동기 → 전공/활동 → 인성 질문 → 마지막 할 말까지, 실제 대입 면접의 화법과 순서를 그대로 재현합니다.</p>
+        <h3>음성으로 실전처럼 연습</h3>
+        <p>자기소개 → 지원동기 → 전공/활동 → 인성 질문 → 마지막 할 말까지, 실제 대입 면접의 화법과 순서를 그대로 재현합니다. 음성 면접 모드를 켜면 면접관 질문을 귀로 듣고, 답변도 말로 바로 전달할 수 있습니다.</p>
       </div>
       <div class="feature-card">
         <div class="icon">📚</div>
@@ -134,6 +134,13 @@
           <textarea id="personal-info" rows="3" placeholder="예: 3년간 교내 환경동아리 부장, 탄소중립 캠페인 기획, 관련 소논문 작성 경험 등 강조하고 싶은 활동을 붙여넣으세요."></textarea>
         </div>
 
+        <div class="field voice-mode-field" id="voice-mode-field" hidden>
+          <label class="switch-label" for="voice-mode-checkbox">
+            <input type="checkbox" id="voice-mode-checkbox" />
+            <span>🎙️ <strong>음성 면접 모드</strong>로 시작 — 면접관 질문을 음성으로 듣고, 답변도 말하면 자동으로 전송됩니다 (실제 대면 면접처럼 진행)</span>
+          </label>
+        </div>
+
         <button id="start-btn" class="primary-btn">면접 시작하기</button>
         <p id="setup-error" class="error-msg" hidden></p>
 
@@ -171,6 +178,7 @@
         </div>
         <div class="chat-header-right">
           <span id="chat-timer" class="chat-timer">⏱ 00:00</span>
+          <button type="button" id="voice-mode-btn" class="ghost-btn" title="음성 면접 모드 켜기/끄기" hidden>🎙️ 음성모드</button>
           <button type="button" id="copy-btn" class="ghost-btn" title="대화 내용 복사">복사</button>
           <button id="restart-btn" class="ghost-btn" title="새 면접 시작">새 면접</button>
         </div>
