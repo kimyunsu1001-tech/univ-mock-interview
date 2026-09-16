@@ -1,4 +1,4 @@
-/* 모의면접 AI — 클라이언트에서 Anthropic API를 직접 호출합니다.
+/* 모의 면접 AI — 클라이언트에서 Anthropic API를 직접 호출합니다.
    API 키는 브라우저 localStorage에만 저장되며, Anthropic API 서버 외에는 전송되지 않습니다. */
 
 const STORAGE_KEY = "mock-interview-settings-v1";
@@ -7,6 +7,7 @@ const MAX_HISTORY = 10;
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const PROXY_URL = "https://mock-interview-proxy.kimyunsu1001.workers.dev";
 const FREE_MODEL_LABEL = "무료 체험 모델";
+const WARNING_MARKER = "⚠️ 답변 확인:";
 
 const el = {
   topNav: document.getElementById("top-nav"),
@@ -128,6 +129,20 @@ ${personalInfoBlock}
   파고드는 질문. 같은 유형만 반복하지 않습니다.
 - 지원자가 활동의 결과만 말하면 과정과 사고 과정을, 과정만 말하면
   결과와 배운 점을 되묻습니다.
+
+## 답변 적절성 확인 (경고)
+지원자의 답변이 아래 중 하나에 명백히 해당할 때만, 응답 맨 첫 줄에
+"${WARNING_MARKER} "로 시작하는 한 줄짜리 경고를 추가한 뒤 그 다음
+줄부터 평소처럼 답합니다:
+- 질문의 의도와 명백히 다른 내용으로 답했을 때 (질문과 무관한 화제)
+- 질문에 사실상 답하지 않고 회피했을 때
+- "네", "모르겠습니다"처럼 지나치게 짧고 성의 없는 답변일 때
+- 이전 답변과 명백히 모순되는 내용을 말했을 때
+- 반말, 욕설 등 면접 태도에 맞지 않는 표현을 썼을 때
+경고 문구는 비난조가 아니라 담담한 사실 확인 어조로, 이유를 한 문장
+으로 구체적으로 씁니다 (예: "${WARNING_MARKER} 방금 답변은 지원동기가
+아니라 취미 이야기로 흘렀습니다."). 위 조건에 해당하지 않는 정상적인
+답변에는 이 경고를 절대 붙이지 마세요. 남발하면 안 됩니다.
 ${presentationBlock}
 ## 진행 방식 (실전 대입 면접의 일반적 흐름을 따름)
 1. 첫 턴에 "면접을 시작하겠습니다."라고 짧게 안내한 뒤, 바로
@@ -296,6 +311,33 @@ function addBubble(role, text) {
   return row;
 }
 
+function addWarningBubble(message) {
+  const div = document.createElement("div");
+  div.className = "bubble warning";
+  const icon = document.createElement("span");
+  icon.className = "warning-icon";
+  icon.textContent = "⚠️";
+  const text = document.createElement("span");
+  text.textContent = message;
+  div.appendChild(icon);
+  div.appendChild(text);
+  el.messages.appendChild(div);
+  el.messages.scrollTop = el.messages.scrollHeight;
+  return div;
+}
+
+// AI 응답 맨 앞에 붙는 "⚠️ 답변 확인: ..." 한 줄을 분리해 별도의 경고
+// 말풍선으로 렌더링하기 위한 파서. 마커가 없으면 원문 그대로 반환한다.
+function splitWarning(text) {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith(WARNING_MARKER)) return { warning: null, rest: text };
+  const newlineIdx = trimmed.indexOf("\n");
+  const firstLine = newlineIdx === -1 ? trimmed : trimmed.slice(0, newlineIdx);
+  const rest = newlineIdx === -1 ? "" : trimmed.slice(newlineIdx + 1).trimStart();
+  const warning = firstLine.slice(WARNING_MARKER.length).trim();
+  return { warning: warning || "답변이 질문 의도와 다소 다른 것 같습니다.", rest };
+}
+
 function addLoadingBubble() {
   const row = document.createElement("div");
   row.className = "msg-row interviewer";
@@ -380,10 +422,14 @@ async function callClaude(userText) {
 
     loadingBubble.remove();
     conversation.push({ role: "assistant", content: text });
-    addBubble("interviewer", text);
-    if (voiceMode) speak(text);
 
-    if (!interviewFinished && (text.includes("총평") || text.includes("항목별 점수"))) {
+    const { warning, rest } = splitWarning(text);
+    const displayText = warning ? rest : text;
+    if (warning) addWarningBubble(warning);
+    addBubble("interviewer", displayText);
+    if (voiceMode) speak(warning ? `${warning}. ${displayText}` : displayText);
+
+    if (!interviewFinished && (displayText.includes("총평") || displayText.includes("항목별 점수"))) {
       finishInterview();
     }
   } catch (err) {
@@ -457,7 +503,7 @@ function buildTranscriptText() {
   const headerBits = [settings.major, settings.admissionType, settings.interviewStyle, settings.difficulty]
     .filter(Boolean)
     .join(" · ");
-  const lines = [`[모의면접 AI] ${headerBits}`, ""];
+  const lines = [`[모의 면접 AI] ${headerBits}`, ""];
   conversation.forEach((m) => {
     if (m.role === "user" && m.content === "면접을 시작해 주세요.") return;
     lines.push(`${m.role === "user" ? "지원자" : "면접관"}: ${m.content}`);
@@ -660,12 +706,17 @@ function setupSpeechInput() {
   }
 }
 
-/* ---- 생기부·자소서 파일 첨부 (PDF/TXT → 텍스트 추출) ----
-   전부 브라우저 안에서만 처리한다: PDF.js 라이브러리 코드만 CDN에서
-   불러오고, 파일 내용 자체는 어디로도 전송되지 않는다. */
+/* ---- 생기부·자소서 파일 첨부 (어떤 파일이든 선택 가능 → 가능하면 텍스트 추출) ----
+   전부 브라우저 안에서만 처리한다: PDF.js/Mammoth.js 라이브러리 코드만
+   CDN에서 불러오고, 파일 내용 자체는 어디로도 전송되지 않는다.
+   파일 선택 자체는 어떤 형식이든 막지 않되, 실제로 텍스트를 뽑아낼 수
+   없는 형식(이미지, HWP, 옛 doc, 그 외 알 수 없는 바이너리 등)은
+   친절한 안내 메시지로 대체한다 — 깨진 텍스트를 그대로 채워 넣지 않는다. */
 const PDFJS_VERSION = "6.3.289";
+const MAMMOTH_VERSION = "1.12.2";
 const MAX_PERSONAL_INFO_CHARS = 6000;
 let pdfjsLibPromise = null;
+let mammothLibPromise = null;
 
 function loadPdfJs() {
   if (!pdfjsLibPromise) {
@@ -677,6 +728,20 @@ function loadPdfJs() {
     });
   }
   return pdfjsLibPromise;
+}
+
+function loadMammoth() {
+  if (window.mammoth) return Promise.resolve(window.mammoth);
+  if (!mammothLibPromise) {
+    mammothLibPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = `https://cdnjs.cloudflare.com/ajax/libs/mammoth/${MAMMOTH_VERSION}/mammoth.browser.min.js`;
+      script.onload = () => resolve(window.mammoth);
+      script.onerror = () => reject(new Error("mammoth.js 로드 실패"));
+      document.head.appendChild(script);
+    });
+  }
+  return mammothLibPromise;
 }
 
 async function extractPdfText(file) {
@@ -692,21 +757,83 @@ async function extractPdfText(file) {
   return pageTexts.join("\n").trim();
 }
 
+async function extractDocxText(file) {
+  const mammoth = await loadMammoth();
+  const arrayBuffer = await file.arrayBuffer();
+  const result = await mammoth.extractRawText({ arrayBuffer });
+  return (result.value || "").trim();
+}
+
+function getFileExt(filename) {
+  const m = /\.([a-z0-9]+)$/i.exec(filename || "");
+  return m ? m[1].toLowerCase() : "";
+}
+
+// file.text()로 읽은 결과가 실제 문서 텍스트인지, 지원하지 않는 바이너리
+// 파일(hwp, 이미지, 알 수 없는 형식 등)을 텍스트로 억지로 읽어 깨진
+// 문자열이 나온 것인지 구분하기 위한 간단한 휴리스틱.
+function looksLikeReadableText(str) {
+  if (!str) return false;
+  const sample = str.slice(0, 5000);
+  let bad = 0;
+  for (let i = 0; i < sample.length; i++) {
+    const code = sample.charCodeAt(i);
+    if ((code < 32 && code !== 9 && code !== 10 && code !== 13) || code === 0xfffd) bad++;
+  }
+  return bad / Math.max(sample.length, 1) < 0.02;
+}
+
 function setFileUploadStatus(text, kind) {
   if (!el.fileUploadStatus) return;
   el.fileUploadStatus.textContent = text;
   el.fileUploadStatus.className = `file-upload-status${kind ? ` ${kind}` : ""}`;
 }
 
+const UNSUPPORTED_FORMAT_GUIDE = {
+  hwp: "HWP 파일은 자동 추출을 지원하지 않습니다. 한글에서 내용을 복사해 붙여넣거나, PDF·DOCX로 저장한 뒤 다시 첨부해 주세요.",
+  hwpx: "HWP 파일은 자동 추출을 지원하지 않습니다. 한글에서 내용을 복사해 붙여넣거나, PDF·DOCX로 저장한 뒤 다시 첨부해 주세요.",
+  doc: "옛 워드 형식(.doc)은 지원하지 않습니다. Word에서 '다른 이름으로 저장 → .docx'로 저장한 뒤 다시 시도해 주세요.",
+};
+const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "heic", "tif", "tiff"];
+
 async function handlePersonalInfoFile() {
   const file = el.personalInfoFile.files?.[0];
   if (!file) return;
 
   setFileUploadStatus(`"${file.name}" 처리 중...`);
+  const ext = getFileExt(file.name);
 
   try {
-    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-    let text = isPdf ? await extractPdfText(file) : await file.text();
+    let text;
+
+    if (file.type === "application/pdf" || ext === "pdf") {
+      text = await extractPdfText(file);
+    } else if (
+      ext === "docx" ||
+      file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ) {
+      text = await extractDocxText(file);
+    } else if (UNSUPPORTED_FORMAT_GUIDE[ext]) {
+      setFileUploadStatus(UNSUPPORTED_FORMAT_GUIDE[ext], "error");
+      return;
+    } else if (IMAGE_EXTS.includes(ext) || file.type.startsWith("image/")) {
+      setFileUploadStatus(
+        "이미지 파일에서는 글자를 자동으로 읽어올 수 없습니다. 내용을 직접 입력하거나 텍스트 파일로 옮겨서 첨부해 주세요.",
+        "error"
+      );
+      return;
+    } else {
+      const raw = await file.text();
+      if (!looksLikeReadableText(raw)) {
+        setFileUploadStatus(
+          `"${file.name}"은(는) 지원하지 않는 파일 형식이에요. PDF, DOCX, TXT로 저장한 뒤 다시 첨부해 주세요.`,
+          "error"
+        );
+        return;
+      }
+      text = raw;
+    }
+
     text = text.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 
     if (!text) {
@@ -727,7 +854,7 @@ async function handlePersonalInfoFile() {
     );
   } catch (e) {
     setFileUploadStatus(
-      "파일을 읽는 중 오류가 발생했습니다. 다른 파일을 시도하거나 내용을 직접 붙여넣어 주세요.",
+      "파일을 읽는 중 오류가 발생했습니다. PDF, DOCX, TXT 형식으로 저장한 뒤 다시 시도해 주세요.",
       "error"
     );
   } finally {

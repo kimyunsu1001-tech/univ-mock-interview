@@ -1053,6 +1053,25 @@ a { color: inherit; }
   font-style: italic;
 }
 
+.bubble.warning {
+  align-self: center;
+  max-width: 92%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: color-mix(in srgb, var(--error) 12%, var(--card-bg));
+  border: 1px solid color-mix(in srgb, var(--error) 40%, var(--border));
+  color: var(--error);
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1.5;
+  box-shadow: none;
+}
+
+.bubble.warning .warning-icon {
+  flex-shrink: 0;
+}
+
 @keyframes msg-in {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
