@@ -794,6 +794,27 @@ function getFileExt(filename) {
   return m ? m[1].toLowerCase() : "";
 }
 
+// 웹페이지를 "다른 이름으로 저장"한 .html 파일(예: 나이스 등 학교 포털에서
+// 저장한 생기부 페이지)을 첨부하는 경우가 실제로 있어, 태그를 벗겨내고
+// 읽을 수 있는 텍스트만 남긴다. 이 처리가 없으면 <head>의 CSS·스크립트
+// 코드만 잔뜩 추출되어 실제 내용은 전혀 못 건지는 문제가 있었다.
+function extractHtmlText(raw) {
+  return raw
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(tr|p|div|li|h[1-6])>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .trim();
+}
+
 // file.text()로 읽은 결과가 실제 문서 텍스트인지, 지원하지 않는 바이너리
 // 파일(hwp, 이미지, 알 수 없는 형식 등)을 텍스트로 억지로 읽어 깨진
 // 문자열이 나온 것인지 구분하기 위한 간단한 휴리스틱.
@@ -847,6 +868,8 @@ async function handlePersonalInfoFile() {
         "error"
       );
       return;
+    } else if (ext === "html" || ext === "htm" || file.type === "text/html") {
+      text = extractHtmlText(await file.text());
     } else {
       const raw = await file.text();
       if (!looksLikeReadableText(raw)) {
