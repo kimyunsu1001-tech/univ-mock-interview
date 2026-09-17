@@ -909,16 +909,12 @@ function startInterview() {
 
   settings = readSettingsFromForm();
 
-  // 지원자가 면접 방식을 직접 고르지 않았다면, AI의 판단에 맡기지 않고
-  // 앱이 직접 결정한다 (소형 모델은 프롬프트로 "스스로 판단해 알려라"고
-  // 시켜도 실측상 그냥 무시하고 넘어가는 경우가 많아 신뢰할 수 없었음).
-  // 자기소개서·학생부 내용이 있으면 그 내용을 깊이 파고드는
-  // "서류기반면접"으로, 없으면 일반적인 "인성면접"으로 자동 설정하고
-  // 채팅창에 어떤 방식으로 정했는지 바로 알려준다. 제시문면접은 별도의
-  // 결정적 제시문 생성 로직이 필요해 사용자가 직접 선택했을 때만 쓴다.
+  // 지원자가 면접 방식을 직접 고르지 않았다면 "서류기반면접"으로
+  // 자동 설정하고 채팅창에 알려준다. 제시문면접은 별도의 결정적 제시문
+  // 생성 로직이 필요해 사용자가 직접 선택했을 때만 쓴다.
   let autoSelectedStyle = null;
   if (!settings.interviewStyle) {
-    autoSelectedStyle = settings.personalInfo ? "서류기반면접" : "인성면접";
+    autoSelectedStyle = "서류기반면접";
     settings.interviewStyle = autoSelectedStyle;
   }
 
