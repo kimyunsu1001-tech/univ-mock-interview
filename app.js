@@ -43,6 +43,7 @@ const el = {
   progressFill: document.getElementById("progress-fill"),
   copyBtn: document.getElementById("copy-btn"),
   micBtn: document.getElementById("mic-btn"),
+  voiceHint: document.getElementById("voice-hint"),
   voiceModeField: document.getElementById("voice-mode-field"),
   voiceModeCheckbox: document.getElementById("voice-mode-checkbox"),
   voiceModeBtn: document.getElementById("voice-mode-btn"),
@@ -383,6 +384,7 @@ function setWaiting(waiting) {
   isWaiting = waiting;
   el.sendBtn.disabled = waiting;
   el.chatInput.disabled = waiting;
+  updateVoiceHint();
 }
 
 async function callClaude(userText) {
@@ -539,6 +541,7 @@ function buildTranscriptText() {
 
 function finishInterview() {
   interviewFinished = true;
+  cancelRecording();
   stopTimer();
   updateProgress();
 
@@ -588,15 +591,55 @@ function flashCopyButton() {
 }
 
 /* ---- 음성 입력/출력 (Web Speech API) ----
-   음성 면접 모드에서는 면접관 질문을 음성으로 읽어주고(TTS), 답변도
-   음성으로 받아(STT) 자동 전송함으로써 실제 대면 면접과 유사한 흐름을
-   재현한다. autoCaptureActive는 시스템이 자동으로 시작한 녹음인지
-   (자동 전송 대상) 사용자가 마이크 버튼을 직접 눌러 시작한 수동 입력인지
-   (텍스트만 채우고 직접 전송 버튼을 누르게 함) 구분하기 위한 플래그다. */
+   음성 면접 모드에서는 면접관 질문을 음성으로 읽어주고(TTS), 답변은
+   "마이크 버튼을 한 번 눌러 시작 → 말하기 → 다시 눌러 종료" 방식으로
+   받는다. 종료하면 음성 면접 모드에서는 인식된 답변이 바로 전송되고,
+   일반 모드에서는 입력창에 채워져 직접 전송할 수 있다.
+   브라우저는 잠깐만 말이 끊겨도 인식을 스스로 끝내버리므로, 사용자가
+   종료 버튼을 누르기 전까지는 인식이 끝날 때마다 자동으로 다시 시작해
+   계속 듣는다(wantRecording). */
 const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognizer = null;
-let isRecording = false;
-let autoCaptureActive = false;
+let isRecording = false; // 브라우저 인식 세션이 실제로 돌고 있는지
+let wantRecording = false; // 사용자가 "듣는 중"을 원하는 상태(종료 버튼 누르기 전까지 true)
+let submitOnStop = false;
+let voiceBase = ""; // 녹음 시작 시점에 입력창에 있던 글
+let voicePrior = ""; // 자동 재시작 이전 세션들에서 확정된 텍스트
+let voiceSession = ""; // 현재 인식 세션의 텍스트(중간 결과 포함)
+let isSpeaking = false;
+let currentUtterance = null;
+
+function joinText(...parts) {
+  return parts
+    .map((p) => (p || "").trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function updateVoiceHint() {
+  if (!el.voiceHint) return;
+  if (!voiceMode || interviewFinished || el.interviewScreen.hidden) {
+    el.voiceHint.hidden = true;
+    return;
+  }
+  let text;
+  let state = "";
+  if (wantRecording) {
+    text = "🔴 듣는 중… 답변이 끝나면 마이크 버튼을 한 번 더 눌러 종료하세요";
+    state = "recording";
+  } else if (isWaiting) {
+    text = "면접관이 답변을 확인하고 있어요…";
+  } else if (isSpeaking) {
+    text = "🔊 면접관이 질문 중입니다 (마이크를 누르면 바로 답변할 수 있어요)";
+  } else {
+    text = "🎤 마이크 버튼을 눌러 답변을 시작하세요";
+    state = "ready";
+  }
+  el.voiceHint.hidden = false;
+  el.voiceHint.textContent = text;
+  el.voiceHint.className = `voice-hint${state ? ` ${state}` : ""}`;
+  el.micBtn?.classList.toggle("awaiting", state === "ready");
+}
 
 function speak(text) {
   if (!window.speechSynthesis) return;
@@ -607,21 +650,90 @@ function speak(text) {
   utter.pitch = 1.0;
   const koVoice = window.speechSynthesis.getVoices().find((v) => v.lang && v.lang.startsWith("ko"));
   if (koVoice) utter.voice = koVoice;
-  utter.onend = () => {
-    if (voiceMode && !interviewFinished && !isWaiting) startVoiceCapture();
+  currentUtterance = utter;
+  const done = () => {
+    if (currentUtterance !== utter) return; // 새 발화로 교체된 뒤 늦게 도착한 이벤트는 무시
+    isSpeaking = false;
+    updateVoiceHint();
   };
+  utter.onstart = () => {
+    if (currentUtterance !== utter) return;
+    isSpeaking = true;
+    updateVoiceHint();
+  };
+  utter.onend = done;
+  utter.onerror = done;
   window.speechSynthesis.speak(utter);
 }
 
-function startVoiceCapture() {
-  if (!recognizer || isRecording || isWaiting) return;
-  autoCaptureActive = true;
+function stopSpeaking() {
+  currentUtterance = null;
+  isSpeaking = false;
+  window.speechSynthesis?.cancel();
+}
+
+function renderVoiceTranscript() {
+  el.chatInput.value = joinText(voiceBase, voicePrior, voiceSession);
+}
+
+function startRecording() {
+  if (!recognizer || wantRecording || isWaiting || interviewFinished) return;
+  stopSpeaking(); // 면접관이 말하는 중이어도 끊고 바로 답변 시작
+  voiceBase = voiceMode ? "" : el.chatInput.value.trim();
+  voicePrior = "";
+  voiceSession = "";
+  if (voiceMode) el.chatInput.value = "";
+  submitOnStop = voiceMode;
+  wantRecording = true;
   try {
     recognizer.start();
     isRecording = true;
-    el.micBtn.classList.add("recording");
   } catch (e) {
-    autoCaptureActive = false;
+    wantRecording = false;
+    submitOnStop = false;
+    addBubble("system", "마이크를 시작하지 못했습니다. 브라우저의 마이크 권한을 확인해 주세요.");
+  }
+  el.micBtn.classList.add("recording");
+  updateVoiceHint();
+}
+
+function stopRecording() {
+  if (!wantRecording) return;
+  wantRecording = false; // onend에서 마무리(finishRecording)
+  try {
+    recognizer.stop();
+  } catch (e) {
+    finishRecording();
+  }
+}
+
+// 사용자가 직접 타이핑해 전송하거나 면접을 다시 시작할 때: 녹음 결과를 버리고 즉시 중단
+function cancelRecording() {
+  wantRecording = false;
+  submitOnStop = false;
+  voiceBase = voicePrior = voiceSession = "";
+  try {
+    if (recognizer && (isRecording || el.micBtn.classList.contains("recording"))) recognizer.abort();
+  } catch (e) {
+    /* ignore */
+  }
+  isRecording = false;
+  el.micBtn?.classList.remove("recording");
+  updateVoiceHint();
+}
+
+function finishRecording() {
+  isRecording = false;
+  wantRecording = false;
+  el.micBtn.classList.remove("recording");
+  const shouldSubmit = submitOnStop;
+  submitOnStop = false;
+  updateVoiceHint();
+  if (!shouldSubmit) return;
+  if (el.chatInput.value.trim()) {
+    el.chatForm.requestSubmit();
+  } else {
+    addBubble("system", "음성이 인식되지 않았어요. 마이크 버튼을 눌러 다시 답변해 주세요.");
   }
 }
 
@@ -635,14 +747,16 @@ function setVoiceMode(next) {
   if (el.voiceModeCheckbox) el.voiceModeCheckbox.checked = voiceMode;
   if (el.voiceModeBtn) el.voiceModeBtn.classList.toggle("active", voiceMode);
   if (!voiceMode) {
-    window.speechSynthesis?.cancel();
-    if (isRecording) recognizer?.stop();
+    stopSpeaking();
+    cancelRecording();
+    el.micBtn?.classList.remove("awaiting");
   } else {
     const last = conversation[conversation.length - 1];
     if (last && last.role === "assistant" && !isWaiting && !interviewFinished) {
       speak(last.content);
     }
   }
+  updateVoiceHint();
 }
 
 function setupSpeechInput() {
@@ -651,63 +765,63 @@ function setupSpeechInput() {
 
     recognizer = new SpeechRecognitionImpl();
     recognizer.lang = "ko-KR";
-    recognizer.continuous = false;
-    recognizer.interimResults = false;
+    recognizer.continuous = true;
+    recognizer.interimResults = true;
 
     recognizer.onresult = (event) => {
-      const transcript = Array.from(event.results)
+      // 이번 세션의 결과 전체를 매번 다시 조립한다(부분 결과가 중복되어 쌓이는 문제 방지)
+      voiceSession = Array.from(event.results)
         .map((r) => r[0].transcript)
         .join(" ");
-      if (autoCaptureActive) {
-        el.chatInput.value = transcript;
-      } else {
-        const prefix = el.chatInput.value.trim();
-        el.chatInput.value = prefix ? `${prefix} ${transcript}` : transcript;
-      }
+      renderVoiceTranscript();
     };
 
     recognizer.onend = () => {
       isRecording = false;
-      el.micBtn.classList.remove("recording");
-      if (autoCaptureActive) {
-        autoCaptureActive = false;
-        const text = el.chatInput.value.trim();
-        if (text) {
-          el.chatForm.requestSubmit();
-        } else if (voiceMode) {
-          addBubble("system", "음성이 인식되지 않았어요. 마이크 버튼을 눌러 다시 답변해 주세요.");
-        }
+      if (wantRecording) {
+        // 사용자가 아직 종료를 누르지 않았는데 브라우저가 스스로 끝낸 경우(무음·시간 제한 등):
+        // 지금까지의 내용을 확정해 두고 다시 듣기 시작한다.
+        voicePrior = joinText(voicePrior, voiceSession);
+        voiceSession = "";
+        setTimeout(() => {
+          if (!wantRecording || isRecording) return;
+          try {
+            recognizer.start();
+            isRecording = true;
+          } catch (e) {
+            finishRecording();
+          }
+        }, 200);
+        return;
       }
+      finishRecording();
     };
 
     recognizer.onerror = (event) => {
+      const err = event.error;
+      // 무음·중단은 onend에서 재시작/마무리되므로 여기서는 무시
+      if (err === "no-speech" || err === "aborted") return;
+      const wasSubmitting = submitOnStop;
+      wantRecording = false;
+      submitOnStop = false;
       isRecording = false;
       el.micBtn.classList.remove("recording");
-      if (autoCaptureActive) {
-        autoCaptureActive = false;
-        if (voiceMode) {
-          addBubble(
-            "system",
-            `음성 인식에 실패했습니다 (${event.error || "오류"}). 마이크 버튼을 눌러 다시 시도해 주세요.`
-          );
-        }
-      }
+      updateVoiceHint();
+      const permission = err === "not-allowed" || err === "service-not-allowed";
+      addBubble(
+        "system",
+        permission
+          ? "마이크 사용이 허용되지 않았습니다. 주소창 옆 자물쇠 아이콘에서 마이크 권한을 허용한 뒤 다시 눌러 주세요."
+          : `음성 인식에 실패했습니다 (${err || "오류"}). 마이크 버튼을 눌러 다시 시도해 주세요.`
+      );
+      if (wasSubmitting) voiceBase = voicePrior = voiceSession = "";
     };
 
+    // 한 번 누르면 듣기 시작, 다시 누르면 종료
     el.micBtn.addEventListener("click", () => {
       if (isWaiting) return;
-      if (isRecording) {
-        recognizer.stop();
-        return;
-      }
-      autoCaptureActive = false;
-      try {
-        recognizer.start();
-        isRecording = true;
-        el.micBtn.classList.add("recording");
-      } catch (e) {
-        /* already started or mic permission denied — ignore */
-      }
+      if (wantRecording) stopRecording();
+      else startRecording();
     });
   }
 
@@ -975,15 +1089,16 @@ function startInterview() {
 
   startTimer();
   updateProgress();
+  updateVoiceHint();
   callClaude("면접을 시작해 주세요.");
 }
 
 function restartInterview() {
   stopTimer();
-  window.speechSynthesis?.cancel();
-  if (isRecording) recognizer?.stop();
-  autoCaptureActive = false;
+  stopSpeaking();
+  cancelRecording();
   el.interviewScreen.hidden = true;
+  updateVoiceHint();
   if (el.topNav) el.topNav.hidden = false;
   if (el.heroSection) el.heroSection.hidden = false;
   if (el.featuresSection) el.featuresSection.hidden = false;
@@ -998,6 +1113,10 @@ function handleSubmit(e) {
   if (isWaiting) return;
   const text = el.chatInput.value.trim();
   if (!text) return;
+  // 녹음 중에 직접 전송 버튼을 누른 경우: 방금 읽은 텍스트로 전송하고 녹음은 버린다
+  // (입력창을 비운 뒤 뒤늦게 도착하는 인식 결과가 다시 채워 넣는 것을 막는다)
+  if (wantRecording || isRecording) cancelRecording();
+  stopSpeaking();
   addBubble("user", text);
   el.chatInput.value = "";
   turnCount += 1;
