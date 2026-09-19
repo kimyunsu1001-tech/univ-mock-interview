@@ -44,6 +44,7 @@ const el = {
   copyBtn: document.getElementById("copy-btn"),
   micBtn: document.getElementById("mic-btn"),
   voiceHint: document.getElementById("voice-hint"),
+  voiceUnsupported: document.getElementById("voice-unsupported"),
   voiceModeField: document.getElementById("voice-mode-field"),
   voiceModeCheckbox: document.getElementById("voice-mode-checkbox"),
   voiceModeBtn: document.getElementById("voice-mode-btn"),
@@ -61,6 +62,9 @@ let modelId = "";
 let mode = "free"; // "free" | "own"
 let voiceMode = false;
 let isWaiting = false;
+let restartPending = false;
+let pendingRestartTimer = null;
+let restartCount = 0;
 let turnCount = 0;
 let interviewFinished = false;
 let timerInterval = null;
@@ -117,8 +121,8 @@ function buildSystemPrompt(s, opts) {
 아니라 취미 이야기로 흘렀습니다."). 위 조건에 해당하지 않는 정상적인
 답변에는 이 경고를 절대 붙이지 마세요. 남발하면 안 됩니다.
 **이 경고를 붙인 턴에는 새로운 질문(꼬리질문 포함)을 절대 하지
-마세요.** 대신 경고 문구 다음 줄에 "방금 드린 질문에 다시 답변해
-주시겠어요?"처럼 같은 질문에 다시 답하도록 정중히 요청만 하세요.
+마세요.** 경고 한 줄만 쓰고 그 뒤에는 아무것도 쓰지 마세요. 경고가
+나오면 앱이 면접을 처음부터 다시 시작합니다.
 `
     : "";
 
@@ -451,6 +455,19 @@ async function callClaude(userText) {
     conversation.push({ role: "assistant", content: text });
 
     const { warning, rest } = splitWarning(text);
+
+    // 답변이 질문과 맞지 않다고 판정되면 경고만 띄우고 넘어가지 않고 면접을 처음부터
+    // 다시 시작한다. 첫 질문(turnCount 0)에는 판정 대상 답변이 없으므로 재시작하지 않는다.
+    if (warning && turnCount >= 1) {
+      addWarningBubble(warning);
+      addBubble("system", "답변이 질문과 맞지 않아 잠시 후 면접을 처음부터 다시 시작합니다.");
+      if (voiceMode) speak(`${warning}. 면접을 처음부터 다시 시작합니다.`);
+      restartPending = true;
+      clearTimeout(pendingRestartTimer);
+      pendingRestartTimer = setTimeout(restartAfterWarning, voiceMode ? 5000 : 2500);
+      return;
+    }
+
     const displayText = warning ? rest : text;
     if (warning) addWarningBubble(warning);
     addBubble("interviewer", displayText);
@@ -467,9 +484,26 @@ async function callClaude(userText) {
         : "API 키와 모델 ID를 확인한 뒤 다시 시도해 주세요.";
     addBubble("system", `오류가 발생했습니다: ${err.message}\n${hint}`);
   } finally {
-    setWaiting(false);
-    el.chatInput.focus();
+    setWaiting(restartPending); // 재시작 대기 중에는 입력을 잠가 둔다
+    if (!restartPending) el.chatInput.focus();
   }
+}
+
+function restartAfterWarning() {
+  pendingRestartTimer = null;
+  if (!restartPending) return;
+  restartPending = false;
+  restartCount += 1;
+  stopSpeaking();
+  cancelRecording();
+  conversation = [];
+  turnCount = 0;
+  interviewFinished = false;
+  addBubble("system", `── 면접을 처음부터 다시 시작합니다 (${restartCount}번째 재시작) ──`);
+  updateProgress();
+  startTimer();
+  setWaiting(false);
+  callClaude("면접을 시작해 주세요.");
 }
 
 function readSettingsFromForm() {
@@ -608,6 +642,39 @@ let voicePrior = ""; // 자동 재시작 이전 세션들에서 확정된 텍스
 let voiceSession = ""; // 현재 인식 세션의 텍스트(중간 결과 포함)
 let isSpeaking = false;
 let currentUtterance = null;
+// 마이크 진단용 단계: "connecting"(시작 요청함) → "listening"(마이크 연결됨) → "hearing"(목소리 감지됨)
+let micPhase = "connecting";
+let micWatchTimers = [];
+let noSpeechCount = 0;
+
+function clearMicWatch() {
+  micWatchTimers.forEach(clearTimeout);
+  micWatchTimers = [];
+}
+
+// 인식이 조용히 실패하면 화면에는 "듣는 중"만 계속 떠서 원인을 알 수 없으므로,
+// 시작 후 일정 시간 안에 마이크 연결/목소리 감지 신호가 없으면 원인을 안내한다.
+function armMicWatch() {
+  clearMicWatch();
+  micWatchTimers.push(
+    setTimeout(() => {
+      if (wantRecording && micPhase === "connecting") {
+        addBubble(
+          "system",
+          "마이크 연결 신호가 오지 않고 있어요. 브라우저 상단의 마이크 허용 팝업을 확인하고, 카카오톡·네이버 같은 앱 안의 브라우저라면 Chrome(안드로이드)·Safari(아이폰)에서 열어 주세요."
+        );
+      }
+    }, 4000),
+    setTimeout(() => {
+      if (wantRecording && micPhase !== "hearing" && !voiceSession && !voicePrior) {
+        addBubble(
+          "system",
+          "마이크는 켜졌지만 목소리가 감지되지 않아요. 기기의 마이크가 음소거되어 있지 않은지, 시스템 설정에서 올바른 마이크가 선택돼 있는지 확인해 주세요."
+        );
+      }
+    }, 12000)
+  );
+}
 
 function joinText(...parts) {
   return parts
@@ -625,7 +692,13 @@ function updateVoiceHint() {
   let text;
   let state = "";
   if (wantRecording) {
-    text = "🔴 듣는 중… 답변이 끝나면 마이크 버튼을 한 번 더 눌러 종료하세요";
+    const phaseText =
+      micPhase === "hearing"
+        ? "목소리 감지됨"
+        : micPhase === "listening"
+        ? "마이크 연결됨 · 말씀해 주세요"
+        : "마이크 연결 중…";
+    text = `🔴 듣는 중 (${phaseText}) — 답변이 끝나면 마이크 버튼을 한 번 더 눌러 종료하세요`;
     state = "recording";
   } else if (isWaiting) {
     text = "면접관이 답변을 확인하고 있어요…";
@@ -679,8 +752,29 @@ function renderVoiceTranscript() {
   el.chatInput.value = joinText(voiceBase, voicePrior, voiceSession);
 }
 
+// 직전 인식 세션이 아직 끝나는 중이면 start()가 InvalidStateError를 던지므로 잠깐 뒤 재시도한다.
+function beginRecognition(retry = 0) {
+  if (!wantRecording || isRecording) return;
+  try {
+    recognizer.start();
+    isRecording = true;
+  } catch (e) {
+    if (e && e.name === "InvalidStateError" && retry < 4) {
+      setTimeout(() => beginRecognition(retry + 1), 300);
+      return;
+    }
+    wantRecording = false;
+    submitOnStop = false;
+    clearMicWatch();
+    el.micBtn.classList.remove("recording");
+    updateVoiceHint();
+    addBubble("system", "마이크를 시작하지 못했습니다. 페이지를 새로고침한 뒤 다시 시도하거나 브라우저의 마이크 권한을 확인해 주세요.");
+  }
+}
+
 function startRecording() {
   if (!recognizer || wantRecording || isWaiting || interviewFinished) return;
+  const wasSpeaking = isSpeaking || !!window.speechSynthesis?.speaking;
   stopSpeaking(); // 면접관이 말하는 중이어도 끊고 바로 답변 시작
   voiceBase = voiceMode ? "" : el.chatInput.value.trim();
   voicePrior = "";
@@ -688,32 +782,41 @@ function startRecording() {
   if (voiceMode) el.chatInput.value = "";
   submitOnStop = voiceMode;
   wantRecording = true;
-  try {
-    recognizer.start();
-    isRecording = true;
-  } catch (e) {
-    wantRecording = false;
-    submitOnStop = false;
-    addBubble("system", "마이크를 시작하지 못했습니다. 브라우저의 마이크 권한을 확인해 주세요.");
-  }
+  micPhase = "connecting";
+  noSpeechCount = 0;
   el.micBtn.classList.add("recording");
   updateVoiceHint();
+  armMicWatch();
+  // 낭독을 방금 끊었다면 오디오 장치가 풀릴 시간을 잠깐 준다(일부 기기에서 바로 시작하면 실패)
+  if (wasSpeaking) setTimeout(() => beginRecognition(), 300);
+  else beginRecognition();
 }
 
 function stopRecording() {
   if (!wantRecording) return;
-  wantRecording = false; // onend에서 마무리(finishRecording)
+  wantRecording = false;
+  clearMicWatch();
+  if (!isRecording) {
+    // 자동 재시작 대기 중이거나 이미 끝난 상태: onend가 오지 않으므로 직접 마무리한다
+    finishRecording();
+    return;
+  }
   try {
-    recognizer.stop();
+    recognizer.stop(); // 정상이면 곧 onend → finishRecording
   } catch (e) {
     finishRecording();
   }
+  // stop() 후에도 onend가 오지 않는 브라우저 대비 안전장치
+  setTimeout(() => {
+    if (isRecording && !wantRecording) finishRecording();
+  }, 3000);
 }
 
 // 사용자가 직접 타이핑해 전송하거나 면접을 다시 시작할 때: 녹음 결과를 버리고 즉시 중단
 function cancelRecording() {
   wantRecording = false;
   submitOnStop = false;
+  clearMicWatch();
   voiceBase = voicePrior = voiceSession = "";
   try {
     if (recognizer && (isRecording || el.micBtn.classList.contains("recording"))) recognizer.abort();
@@ -728,6 +831,7 @@ function cancelRecording() {
 function finishRecording() {
   isRecording = false;
   wantRecording = false;
+  clearMicWatch();
   el.micBtn.classList.remove("recording");
   const shouldSubmit = submitOnStop;
   submitOnStop = false;
@@ -771,12 +875,23 @@ function setupSpeechInput() {
     recognizer.continuous = true;
     recognizer.interimResults = true;
 
+    const setPhase = (phase) => {
+      // 목소리 감지 단계는 자동 재시작 중에도 낮추지 않는다
+      if (micPhase === "hearing" && phase !== "hearing") return;
+      micPhase = phase;
+      updateVoiceHint();
+    };
+    recognizer.onstart = () => setPhase("listening");
+    recognizer.onaudiostart = () => setPhase("listening");
+    recognizer.onspeechstart = () => setPhase("hearing");
+
     recognizer.onresult = (event) => {
       // 이번 세션의 결과 전체를 매번 다시 조립한다(부분 결과가 중복되어 쌓이는 문제 방지)
       voiceSession = Array.from(event.results)
         .map((r) => r[0].transcript)
         .join(" ");
       renderVoiceTranscript();
+      setPhase("hearing");
     };
 
     recognizer.onend = () => {
@@ -786,15 +901,7 @@ function setupSpeechInput() {
         // 지금까지의 내용을 확정해 두고 다시 듣기 시작한다.
         voicePrior = joinText(voicePrior, voiceSession);
         voiceSession = "";
-        setTimeout(() => {
-          if (!wantRecording || isRecording) return;
-          try {
-            recognizer.start();
-            isRecording = true;
-          } catch (e) {
-            finishRecording();
-          }
-        }, 200);
+        setTimeout(() => beginRecognition(), 200);
         return;
       }
       finishRecording();
@@ -802,22 +909,32 @@ function setupSpeechInput() {
 
     recognizer.onerror = (event) => {
       const err = event.error;
-      // 무음·중단은 onend에서 재시작/마무리되므로 여기서는 무시
-      if (err === "no-speech" || err === "aborted") return;
-      const wasSubmitting = submitOnStop;
+      if (err === "no-speech") {
+        noSpeechCount += 1; // 재시작/마무리는 onend가 처리
+        return;
+      }
+      if (err === "aborted") return;
       wantRecording = false;
       submitOnStop = false;
       isRecording = false;
+      clearMicWatch();
       el.micBtn.classList.remove("recording");
       updateVoiceHint();
-      const permission = err === "not-allowed" || err === "service-not-allowed";
+      const messages = {
+        "not-allowed":
+          "마이크 사용이 허용되지 않았습니다. 주소창 왼쪽 자물쇠(설정) 아이콘 → 마이크 → '허용'으로 바꾼 뒤 다시 눌러 주세요. (아이폰은 설정 > 일반 > 키보드 > 받아쓰기가 켜져 있어야 해요)",
+        "service-not-allowed":
+          "이 브라우저 또는 기기에서는 음성 인식 사용이 허용되지 않았습니다. Chrome(안드로이드·PC)이나 Safari(아이폰)에서 열어 주세요. 아이폰은 설정 > 일반 > 키보드 > 받아쓰기도 확인해 주세요.",
+        "audio-capture":
+          "마이크를 찾을 수 없어요. 마이크가 연결돼 있는지, 다른 앱(화상통화 등)이 마이크를 쓰고 있지 않은지 확인해 주세요.",
+        network:
+          "음성 인식 서버에 연결하지 못했어요. 인터넷 연결을 확인해 주세요. (Brave 등 일부 브라우저는 음성 인식을 지원하지 않아요)",
+        "language-not-supported": "이 브라우저는 한국어 음성 인식을 지원하지 않습니다.",
+      };
       addBubble(
         "system",
-        permission
-          ? "마이크 사용이 허용되지 않았습니다. 주소창 옆 자물쇠 아이콘에서 마이크 권한을 허용한 뒤 다시 눌러 주세요."
-          : `음성 인식에 실패했습니다 (${err || "오류"}). 마이크 버튼을 눌러 다시 시도해 주세요.`
+        messages[err] || `음성 인식에 실패했습니다 (${err || "알 수 없는 오류"}). 마이크 버튼을 눌러 다시 시도해 주세요.`
       );
-      if (wasSubmitting) voiceBase = voicePrior = voiceSession = "";
     };
 
     // 한 번 누르면 듣기 시작, 다시 누르면 종료
@@ -845,6 +962,23 @@ function setupSpeechInput() {
       setVoiceMode(el.voiceModeCheckbox.checked);
     });
     el.voiceModeBtn?.addEventListener("click", () => setVoiceMode(!voiceMode));
+  }
+
+  // 음성 기능이 안 되는 환경이면 버튼만 조용히 사라지지 않도록 이유를 알려준다
+  const inAppBrowser = /KAKAOTALK|NAVER\(inapp|Instagram|FBAN|FBAV|Line\/|DaumApps|; wv\)/i.test(
+    navigator.userAgent
+  );
+  let note = "";
+  if (!SpeechRecognitionImpl) {
+    note =
+      "🎙️ 이 브라우저는 음성 인식을 지원하지 않아 음성 답변을 쓸 수 없어요. Chrome(안드로이드·PC), Edge, Safari(아이폰)에서 열어 주세요. (Firefox는 지원하지 않아요)";
+  } else if (inAppBrowser) {
+    note =
+      "🎙️ 카카오톡·네이버 같은 앱 안의 브라우저에서는 마이크가 막혀 있는 경우가 많아요. 음성이 안 되면 링크를 Chrome(안드로이드)이나 Safari(아이폰)로 열어 주세요.";
+  }
+  if (note && el.voiceUnsupported) {
+    el.voiceUnsupported.textContent = note;
+    el.voiceUnsupported.hidden = false;
   }
 }
 
@@ -1063,6 +1197,8 @@ function startInterview() {
   conversation = [];
   turnCount = 0;
   interviewFinished = false;
+  restartCount = 0;
+  restartPending = false;
   el.messages.innerHTML = "";
 
   const headerBits = [settings.major, settings.admissionType, settings.interviewStyle].filter(
@@ -1100,6 +1236,9 @@ function restartInterview() {
   stopTimer();
   stopSpeaking();
   cancelRecording();
+  clearTimeout(pendingRestartTimer);
+  pendingRestartTimer = null;
+  restartPending = false;
   el.interviewScreen.hidden = true;
   updateVoiceHint();
   if (el.topNav) el.topNav.hidden = false;
