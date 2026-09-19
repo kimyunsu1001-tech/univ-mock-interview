@@ -65,6 +65,8 @@ let isWaiting = false;
 let restartPending = false;
 let pendingRestartTimer = null;
 let restartCount = 0;
+let plan = null; // 이번 면접의 무작위 진행 계획 (question-pool.js)
+const OPEN_TRIGGER = "면접을 시작해 주세요.";
 let turnCount = 0;
 let interviewFinished = false;
 let timerInterval = null;
@@ -410,18 +412,34 @@ async function callClaude(userText) {
             "anthropic-version": "2023-06-01",
             "anthropic-dangerous-direct-browser-access": "true",
           };
-    const requestBody =
-      mode === "free"
-        ? {
-            system: buildSystemPrompt(settings, { selfWarn: false }),
-            messages: conversation,
-          }
-        : {
-            model: modelId,
-            max_tokens: 1024,
-            system: buildSystemPrompt(settings),
-            messages: conversation,
-          };
+    // 이번 턴의 진행 단계(꼬리질문 유형·주 질문·마무리 등). 첫 요청은 "open".
+    const isOpen = userText === OPEN_TRIGGER;
+    applyTimeBudget(isOpen);
+    const turn = isOpen ? { kind: "open" } : plan?.queue[plan.index] || null;
+
+    let requestBody;
+    if (mode === "free") {
+      // 무료 체험: 판정·질문 삽입·유형 지시는 서버(worker.js)가 turn을 보고 처리한다
+      requestBody = {
+        system: buildSystemPrompt(settings, { selfWarn: false }),
+        messages: conversation,
+        ...(turn ? { turn } : {}),
+      };
+    } else {
+      // 본인 API 키: 서버 개입이 없으므로 마지막 사용자 메시지(전송용 사본)에 이번 턴 지시를 덧붙인다
+      const directive = isOpen ? "" : turnDirectiveText(turn);
+      const outgoing = conversation.map((m, i) =>
+        directive && i === conversation.length - 1 && m.role === "user"
+          ? { ...m, content: m.content + directive }
+          : m
+      );
+      requestBody = {
+        model: modelId,
+        max_tokens: 1024,
+        system: buildSystemPrompt(settings),
+        messages: outgoing,
+      };
+    }
 
     const res = await fetch(url, {
       method: "POST",
@@ -453,6 +471,7 @@ async function callClaude(userText) {
 
     loadingBubble.remove();
     conversation.push({ role: "assistant", content: text });
+    if (!isOpen && plan && plan.queue[plan.index] === turn) plan.index += 1; // 성공한 턴만 다음 단계로
 
     const { warning, rest } = splitWarning(text);
 
@@ -489,6 +508,17 @@ async function callClaude(userText) {
   }
 }
 
+// 실제 면접처럼 약 10분(TARGET_MINUTES)이 지나면 남은 질문을 건너뛰고 마지막 질문으로 넘어간다.
+function applyTimeBudget(isOpen) {
+  if (isOpen || !plan || interviewFinished) return;
+  if (Date.now() - startTime < TARGET_MINUTES * 60 * 1000) return;
+  const closingIdx = plan.queue.findIndex((st, i) => i >= plan.index && st.kind === "closing");
+  if (closingIdx > plan.index) {
+    plan.queue.splice(plan.index, closingIdx - plan.index);
+    addBubble("system", `면접 시간(약 ${TARGET_MINUTES}분)이 다 되어 마지막 질문으로 넘어갑니다.`);
+  }
+}
+
 function restartAfterWarning() {
   pendingRestartTimer = null;
   if (!restartPending) return;
@@ -500,10 +530,11 @@ function restartAfterWarning() {
   turnCount = 0;
   interviewFinished = false;
   addBubble("system", `── 면접을 처음부터 다시 시작합니다 (${restartCount}번째 재시작) ──`);
+  plan = buildInterviewPlan(settings); // 재시작할 때마다 질문 구성과 꼬리질문 유형을 새로 뽑는다
   updateProgress();
   startTimer();
   setWaiting(false);
-  callClaude("면접을 시작해 주세요.");
+  callClaude(OPEN_TRIGGER);
 }
 
 function readSettingsFromForm() {
@@ -523,13 +554,17 @@ function formatElapsed(ms) {
   return `${m}:${s}`;
 }
 
+function renderTimer() {
+  const elapsed = Date.now() - startTime;
+  el.chatTimer.textContent = `⏱ ${formatElapsed(elapsed)} / ${String(TARGET_MINUTES).padStart(2, "0")}:00`;
+  el.chatTimer.classList.toggle("over", elapsed >= TARGET_MINUTES * 60 * 1000);
+}
+
 function startTimer() {
   startTime = Date.now();
-  el.chatTimer.textContent = "⏱ 00:00";
+  renderTimer();
   clearInterval(timerInterval);
-  timerInterval = setInterval(() => {
-    el.chatTimer.textContent = `⏱ ${formatElapsed(Date.now() - startTime)}`;
-  }, 1000);
+  timerInterval = setInterval(renderTimer, 1000);
 }
 
 function stopTimer() {
@@ -538,7 +573,7 @@ function stopTimer() {
 }
 
 function updateProgress() {
-  const EXPECTED_TURNS = 12;
+  const EXPECTED_TURNS = plan ? plan.queue.length : 12;
   const pct = Math.min((turnCount / EXPECTED_TURNS) * 100, interviewFinished ? 100 : 96);
   el.progressFill.style.width = `${pct}%`;
 }
@@ -566,7 +601,7 @@ function buildTranscriptText() {
     .join(" · ");
   const lines = [`[모의 면접 AI] ${headerBits}`, ""];
   conversation.forEach((m) => {
-    if (m.role === "user" && m.content === "면접을 시작해 주세요.") return;
+    if (m.role === "user" && m.content === OPEN_TRIGGER) return;
     lines.push(`${m.role === "user" ? "지원자" : "면접관"}: ${m.content}`);
     lines.push("");
   });
@@ -1199,6 +1234,7 @@ function startInterview() {
   interviewFinished = false;
   restartCount = 0;
   restartPending = false;
+  plan = buildInterviewPlan(settings);
   el.messages.innerHTML = "";
 
   const headerBits = [settings.major, settings.admissionType, settings.interviewStyle].filter(
@@ -1229,7 +1265,7 @@ function startInterview() {
   startTimer();
   updateProgress();
   updateVoiceHint();
-  callClaude("면접을 시작해 주세요.");
+  callClaude(OPEN_TRIGGER);
 }
 
 function restartInterview() {

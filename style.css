@@ -930,6 +930,8 @@ a { color: inherit; }
   padding: 0 4px;
 }
 
+.chat-timer.over { color: var(--error); }
+
 .chat-header-right .ghost-btn {
   padding: 7px 10px;
   font-size: 0.78rem;
