@@ -663,6 +663,9 @@ function speak(text) {
   };
   utter.onend = done;
   utter.onerror = done;
+  // 일부 브라우저는 긴 발화에서 onend를 보내지 않는 경우가 있어, 안내 문구가
+  // "질문 중"에 멈춰 있지 않도록 예상 낭독 시간 뒤에 강제로 해제한다.
+  setTimeout(done, text.length * 350 + 6000);
   window.speechSynthesis.speak(utter);
 }
 
